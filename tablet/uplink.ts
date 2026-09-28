@@ -35,16 +35,6 @@ export function setUplinkWait(fn: (ms: number) => Promise<void>) {
   wait = fn;
 }
 
-/**
- * Waits for the pen to rest; set by autosave.ts. Reading a notebook (about 220 ms for 9 MB) runs
- * on the thread that sends live ink, so over Tailscale reads during writing held live messages
- * back by up to 0.7 s. Uploads wait for a pause in writing instead.
- */
-let rest = () => Promise.resolve();
-export function setUplinkRest(fn: () => Promise<void>) {
-  rest = fn;
-}
-
 
 /**
  * url: where notebooks go; liveUrl: where live messages go. The laptop's tailscale serve speaks
@@ -227,7 +217,6 @@ export async function uploadNote(file: string, savedAt?: number) {
 
 /** Sends what the laptop lacks of one notebook; returns the file's size, or null when nothing could be sent. */
 async function uploadOne(file: string, rel: string, attempt: number): Promise<number | null> {
-  await rest();
   uploadStep = true;
   try {
     return await uploadStepRun(file, rel, attempt);
