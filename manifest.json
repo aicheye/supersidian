@@ -1,0 +1,9 @@
+{
+	"id": "supersidian",
+	"name": "Supersidian",
+	"version": "0.2.0",
+	"minAppVersion": "1.4.0",
+	"description": "Syncs Supernote notebooks over USB and embeds each page in the dated note for the day it was written.",
+	"author": "Sean Yang",
+	"isDesktopOnly": true
+}

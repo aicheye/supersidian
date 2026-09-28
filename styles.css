@@ -1,0 +1,79 @@
+/* Supersidian page images are ink on a transparent background. styleInk() in main.ts
+   tags them and sets --supersidian-src; the image becomes a mask over the theme's text
+   color, and object-position moves the image's own pixels out of view. */
+img.supersidian-ink {
+	background-color: var(--text-normal);
+	-webkit-mask-image: var(--supersidian-src);
+	mask-image: var(--supersidian-src);
+	-webkit-mask-size: 100% 100%;
+	mask-size: 100% 100%;
+	-webkit-mask-repeat: no-repeat;
+	mask-repeat: no-repeat;
+	object-position: -100000px 0;
+	/* Full size before the file loads (every page is 1920x2560), so a new or changed page
+	   does not first render small and then grow, which moved everything below it twice. */
+	width: 100%;
+	height: auto;
+	aspect-ratio: 1920 / 2560;
+}
+
+/* Strokes drawn live from the tablet. The layer is fixed over the window (not inside the
+   editor), and each page's SVG is moved onto its image every frame; see InkLayer in live.ts. */
+.supersidian-live-layer {
+	/* Zero size: a layer covering the window stopped it from being dragged by the tab header,
+	   even with pointer-events: none. The SVGs inside are fixed to their images. */
+	position: fixed;
+	top: 0;
+	left: 0;
+	width: 0;
+	height: 0;
+	overflow: visible;
+	pointer-events: none;
+	z-index: var(--layer-status-bar);
+}
+svg.supersidian-live {
+	position: fixed;
+	overflow: hidden;
+	fill: var(--text-normal);
+}
+svg.supersidian-live path.supersidian-live-pending {
+	fill: none;
+	stroke: var(--text-normal);
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+/* A motion drawn while the lasso is the likely tool: a thin dashed line, not ink. */
+svg.supersidian-live path.supersidian-live-pending.supersidian-live-lasso {
+	stroke-width: 3;
+	stroke-dasharray: 12 10;
+	stroke-opacity: 0.6;
+}
+
+/* Set by main.ts when no status bar item is showing, so the empty frame is not drawn. */
+.status-bar.supersidian-empty {
+	display: none;
+}
+
+/* The plugin's callouts are muted so they do not compete with the handwriting. */
+.callout[data-callout="transcript"],
+.callout[data-callout="supersidian"] {
+	--callout-color: var(--mono-rgb-100);
+	background-color: rgba(var(--mono-rgb-100), 0.04);
+}
+.callout[data-callout="transcript"] {
+	--callout-icon: lucide-scroll-text;
+}
+.callout[data-callout="supersidian"] {
+	--callout-icon: lucide-waypoints;
+}
+
+/* Page images live in <COURSE>/assets/; the folder is hidden in the file explorer so each course lists only its sections. */
+.nav-folder:has(> .nav-folder-title[data-path$="/assets"]) {
+	display: none;
+}
+
+/* Concept tags outnumber notes in the graph: a neutral light gray keeps the course colors readable
+   (the faint gray looked muddy next to them). */
+.graph-view.color-fill-tag {
+	color: var(--text-muted);
+}

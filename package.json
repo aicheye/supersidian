@@ -1,0 +1,17 @@
+{
+  "name": "supersidian",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "esbuild test/notes.test.ts --bundle --platform=node --outfile=dist/notes.test.js --log-level=warning && node --test dist/notes.test.js",
+    "build": "tsc -p . && node esbuild.mjs"
+  },
+  "type": "commonjs",
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "esbuild": "^0.28.2",
+    "obsidian": "^1.13.1",
+    "typescript": "^7.0.2"
+  },
+  "license": "UNLICENSED"
+}

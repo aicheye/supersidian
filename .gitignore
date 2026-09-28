@@ -1,0 +1,7 @@
+node_modules/
+.venv/
+main.js
+dist/
+tablet/build/
+.claude/
+HANDOFF.md

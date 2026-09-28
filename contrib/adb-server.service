@@ -1,0 +1,10 @@
+[Unit]
+Description=Android Debug Bridge server (Supersidian real-time ink tunnel to the Supernote)
+
+[Service]
+ExecStartPre=-/usr/bin/adb kill-server
+ExecStart=/usr/bin/adb server nodaemon
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
