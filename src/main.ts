@@ -3,7 +3,7 @@ import { EditorView } from "@codemirror/view";
 import { lineChanges } from "./diff";
 import * as path from "path";
 import { adbDevice, adbShell, clockSkewMs, measureClockSkew, shellArg } from "./adb";
-import { lastContact, PUSH_PORT, pushedNotebooks, startPushServer } from "./push";
+import { lastContact, notePulled, PUSH_PORT, pushedNotebooks, startPushServer } from "./push";
 import {
 	changed,
 	courseFolder,
@@ -861,6 +861,7 @@ export default class Supersidian extends Plugin {
 					placeholders: (count) => (prev ? this.keptPlaceholders(prev, count) : []),
 				}));
 				if (!out) continue;
+				if (nb.via === "adb") notePulled(nb.rel, nb.size, nb.mtimeMs);
 				this.data.state.notebooks[nb.rel] = out.state;
 				if (prev) this.adoptPlaceholders(prev, out.state);
 				this.settleLive(out.state);

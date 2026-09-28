@@ -149,6 +149,16 @@ export function startPushServer(h: PushHandlers): () => void {
 	};
 }
 
+/**
+ * Records that adb wrote a newer copy of a notebook into the cache. Without this, the pushed
+ * size no longer matched the cached file after the cable was unplugged, so every sync over
+ * Tailscale stopped with NotebookBusy until the tablet uploaded that notebook again.
+ */
+export function notePulled(rel: string, size: number, mtimeMs: number) {
+	const p = pushed.get(rel);
+	if (p) pushed.set(rel, { ...p, size, savedAt: mtimeMs });
+}
+
 /** Pushed notebooks as sync sources: the copy here is the file to render. */
 export function pushedNotebooks(): DeviceNotebook[] {
 	return [...pushed.values()].map((p) => {
