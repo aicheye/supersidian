@@ -29,6 +29,7 @@ function prompt(images: string[], context: string, known: string[]): string {
 		`Return ONLY a JSON array of ${images.length} objects, one per image in the same order, with no prose before or after it. Each object has these keys:`,
 		'- "transcript": a Markdown transcription that keeps the page structure. Highlighted or underlined titles become "### " headings, arrows and indented items become nested bullets, math uses $...$ or $$...$$ LaTeX, code goes in fenced blocks with a language, and small diagrams become fenced text drawings. Write [?] for illegible words. Use "" for a blank page.',
 		'- "topics": 1 to 4 short phrases naming what the page covers.',
+		'In topics, concepts and any wording of your own, use commas, colons or parentheses instead of em dashes.',
 		'- "concepts": 3 to 10 canonical technical terms from the page, singular, lowercase except proper nouns and acronyms.',
 		...(known.length
 			? ["When a concept means the same as one already in use, spell it exactly as the existing one. Concepts already in use:", known.join("; ")]

@@ -86,6 +86,12 @@ test("checking a task in Home maps to its deadline id", () => {
 	assert.deepEqual(checkedInHome(home), ["dl-abc123"]);
 });
 
+test("deadlines read both item forms, and are written with a colon", () => {
+	const text = "# D\n\n- [ ] **2026-09-28**: Lab ^dl-abc123\n- [x] **2026-09-20** — Quiz ^dl-def456\n";
+	const { items } = parseDeadlines(text);
+	assert.deepEqual(items.map((d) => [d.date, d.title, d.done]), [["2026-09-28", "Lab", false], ["2026-09-20", "Quiz", true]]);
+});
+
 test("model JSON with raw control characters inside strings is repaired", () => {
 	assert.deepEqual(JSON.parse(repairJson('[{"t": "a\nb\tc"}]')), [{ t: "a\nb\tc" }]);
 });
@@ -153,10 +159,10 @@ test("a course page lists its sections, lectures first, and the list is replaced
 		{ folder: "2A/CS241E/Tutorials", notes: 12 },
 		{ folder: "2A/CS241E/Lectures", notes: 24 },
 	]);
-	assert.match(once, /- \*\*Instructor:\*\* X\n\n## Sections\n<!-- supersidian:sections -->\n- \[\[2A\/CS241E\/Lectures\/Lectures\|Lectures\]\] — 24 notes\n- \[\[2A\/CS241E\/Tutorials\/Tutorials\|Tutorials\]\] — 12 notes\n<!-- \/supersidian:sections -->\n\n## Assessments/);
+	assert.match(once, /- \*\*Instructor:\*\* X\n\n## Sections\n<!-- supersidian:sections -->\n- \[\[2A\/CS241E\/Lectures\/Lectures\|Lectures\]\] \(24 notes\)\n- \[\[2A\/CS241E\/Tutorials\/Tutorials\|Tutorials\]\] \(12 notes\)\n<!-- \/supersidian:sections -->\n\n## Assessments/);
 	const twice = applySections(once, [{ folder: "2A/CS241E/Lectures", notes: 1 }]);
 	assert.equal(twice.match(/## Sections/g)?.length, 1);
-	assert.match(twice, /Lectures\]\] — 1 note\n<!--/);
+	assert.match(twice, /Lectures\]\] \(1 note\)\n<!--/);
 });
 
 test("a day with pages and no note gets one in the notebook's section folder", () => {
@@ -195,7 +201,7 @@ test("a term page's hand-written course list is replaced by the generated one", 
 	]);
 	assert.equal(
 		out,
-		"# 1A\n\nNotes from 1A.\n\n## Courses\n<!-- supersidian:courses -->\n- [[1A/MATH115/MATH115|MATH115]] — [[1A/MATH115/Lectures/Lectures|Lectures]] (35) · [[1A/MATH115/Homework/Homework|Homework]] (14)\n<!-- /supersidian:courses -->\n",
+		"# 1A\n\nNotes from 1A.\n\n## Courses\n<!-- supersidian:courses -->\n- [[1A/MATH115/MATH115|MATH115]]: [[1A/MATH115/Lectures/Lectures|Lectures]] (35) · [[1A/MATH115/Homework/Homework|Homework]] (14)\n<!-- /supersidian:courses -->\n",
 	);
 	assert.equal(applyCourses(out, []).match(/## Courses/g)?.length, 1);
 });

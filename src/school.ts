@@ -3,7 +3,7 @@ import { BEGIN, dateLabel, END } from "./notes";
 /**
  * Deadlines.md holds one task per deliverable:
  *
- *   - [ ] **2026-10-02** — [[CS241E/CS241E|CS241E]] CS 241E A3 due ^dl-a1b2c3
+ *   - [ ] **2026-10-02**: [[CS241E/CS241E|CS241E]] CS 241E A3 due ^dl-a1b2c3
  *     Marmoset.
  *
  * The block id after "^" identifies the item across edits. Older files used ✅/🔶/▫️ in
@@ -21,7 +21,7 @@ export interface Deadline {
 	detail: string[];
 }
 
-const ITEM = /^- (?:\[( |x|X)\]|(✅|🔶|▫️|⬜)) \*\*(\d{4}-\d{2}-\d{2})\*\* — (.*?)(?: \^(dl-[a-z0-9]+))?\s*$/u;
+const ITEM = /^- (?:\[( |x|X)\]|(✅|🔶|▫️|⬜)) \*\*(\d{4}-\d{2}-\d{2})\*\*(?::| —) (.*?)(?: \^(dl-[a-z0-9]+))?\s*$/u;
 
 function newId(taken: Set<string>): string {
 	let id: string;
@@ -71,7 +71,7 @@ export function parseDeadlines(text: string): DeadlinesFile {
 export function formatDeadlines(file: DeadlinesFile): string {
 	const items = [...file.items].sort((a, b) => a.date.localeCompare(b.date) || a.title.localeCompare(b.title));
 	const body = items
-		.map((d) => [`- [${d.done ? "x" : " "}] **${d.date}** — ${d.title} ^${d.id}`, ...d.detail.map((l) => `  ${l}`)].join("\n"))
+		.map((d) => [`- [${d.done ? "x" : " "}] **${d.date}**: ${d.title} ^${d.id}`, ...d.detail.map((l) => `  ${l}`)].join("\n"))
 		.join("\n\n");
 	const head = file.head.join("\n").replace(/\s*$/, "");
 	const tail = file.tail.length ? `\n${file.tail.join("\n")}\n` : "";
@@ -171,10 +171,10 @@ const link = (path: string, label: string) => `[[${path.replace(/\.md$/, "")}|${
 export function homeBlock(ctx: HomeContext): string {
 	const { today } = ctx;
 	const open = ctx.items.filter((d) => !d.done).sort((a, b) => a.date.localeCompare(b.date));
-	const task = (d: Deadline) => `- [ ] ${plainTitle(d.title)} — **${countdown(today, d.date)}** [[Deadlines#^${d.id}|↗]]`;
+	const task = (d: Deadline) => `- [ ] ${plainTitle(d.title)} · **${countdown(today, d.date)}** [[Deadlines#^${d.id}|↗]]`;
 	const out: string[] = [];
 
-	out.push(`## Today — ${dateLabel(today)}`);
+	out.push(`## Today · ${dateLabel(today)}`);
 	const classes = ctx.lectures.map((l) => `- ${link(l.path, l.label)}${l.when ? ` · ${l.when}` : ""}`);
 	const dueToday = open.filter((d) => d.date <= today);
 	if (!classes.length && !dueToday.length) out.push("- No classes and nothing due.");
@@ -199,13 +199,13 @@ export function homeBlock(ctx: HomeContext): string {
 			const topics = r.topics.slice(0, 2).map(short).join(" · ");
 			const n = daysBetween(r.date, today);
 			const ago = n === 0 ? "today" : n === 1 ? "yesterday" : `${n} days ago`;
-			out.push(`- ${link(r.path, r.label)} (${ago})${topics ? ` — ${topics}` : ""}`);
+			out.push(`- ${link(r.path, r.label)} (${ago})${topics ? `: ${topics}` : ""}`);
 		}
 	}
 
 	if (ctx.followUps.length) {
 		out.push("", "## Open questions");
-		out.push(...ctx.followUps.slice(0, 8).map((f) => `- ${f.text} — ${link(f.path, f.label)}`));
+		out.push(...ctx.followUps.slice(0, 8).map((f) => `- ${f.text} · ${link(f.path, f.label)}`));
 	}
 
 	if (ctx.status) out.push("", `*${ctx.status}*`);

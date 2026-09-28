@@ -406,7 +406,7 @@ function applyList(text: string, name: string, heading: string, lines: string[])
 
 /** Lists a course's section folders on its page under "## Sections": each index with its number of dated notes. */
 export function applySections(text: string, sections: { folder: string; notes: number }[]): string {
-	const links = sectionLinks(sections, (n) => ` — ${n} note${n === 1 ? "" : "s"}`);
+	const links = sectionLinks(sections, (n) => ` (${n} note${n === 1 ? "" : "s"})`);
 	return applyList(text, "sections", "Sections", links.map((l) => `- ${l}`));
 }
 
@@ -428,7 +428,7 @@ function sectionLinks(sections: { folder: string; notes: number }[], count: (n: 
 export function applyCourses(text: string, courses: { page: string; title: string; sections: { folder: string; notes: number }[] }[]): string {
 	const lines = courses.map(({ page, title, sections }) => {
 		const links = sectionLinks(sections, (n) => ` (${n})`);
-		return `- [[${page.replace(/\.md$/, "")}|${title}]]${links.length ? ` — ${links.join(" · ")}` : ""}`;
+		return `- [[${page.replace(/\.md$/, "")}|${title}]]${links.length ? `: ${links.join(" · ")}` : ""}`;
 	});
 	return applyList(text, "courses", "Courses", lines);
 }
@@ -526,7 +526,7 @@ export async function writeSectionIndex(
 			.slice(0, 3)
 			.map((t) => (t.length > 40 ? `${t.slice(0, 39)}…` : t));
 		const day = dateLabel(date).replace(/, \d{4}$/, "");
-		lines.push(`- [[${note.replace(/\.md$/, "")}|${day}]]${topics.length ? ` — ${topics.join(" · ")}` : ""}`);
+		lines.push(`- [[${note.replace(/\.md$/, "")}|${day}]]${topics.length ? `: ${topics.join(" · ")}` : ""}`);
 	}
 	if (lines.length) sections.push(lines.join("\n"));
 	if (undated.length) sections.push(`## Undated\n${blockBody(undated, null, [])}`);
@@ -564,7 +564,7 @@ export async function writeCourseIndexes(vault: VaultIO, notebookFolders: Set<st
 			const text = await vault.read(page);
 			const next = applySections(text, sections);
 			if (next !== text) await vault.write(page, next);
-			// The course page's title, e.g. "CS 241E — Foundations of Sequential Programs (Enriched)".
+			// The course page's title, e.g. "CS 241E".
 			const title = /^# (.+?)\s*$/m.exec(next)?.[1]?.replace(/ \(\d[AB]\)$/, "") ?? course.split("/").pop()!;
 			courses.push({ page, title, sections });
 		}
