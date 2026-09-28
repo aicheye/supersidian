@@ -129,11 +129,18 @@ export interface LiveErase {
 	stroke: number;
 }
 
+/** Sent when the tablet sees a notebook's page count change (a page added or deleted). */
+export interface LivePages {
+	file: string;
+	count: number;
+}
+
 export interface LiveHandlers {
 	ink(ink: LiveInk): void;
 	erase(erase: LiveErase): void;
 	pen(pen: LivePen): void;
 	preview(preview: LivePreview): void;
+	pages(pages: LivePages): void;
 	error(e: Error): void;
 }
 
@@ -151,6 +158,7 @@ export function deliverLive(h: LiveHandlers, id: string, kind: string, msg: unkn
 	else if (kind === "preview") h.preview(msg as LivePreview);
 	else if (kind === "pen") h.pen(msg as LivePen);
 	else if (kind === "erase") h.erase(msg as LiveErase);
+	else if (kind === "pages") h.pages(msg as LivePages);
 }
 
 /**

@@ -181,6 +181,7 @@ export default class Supersidian extends Plugin {
 			pen: (pen) => this.onPen(pen),
 			// The tablet's page snapshots render the saved file, not unsaved strokes, so they are not used.
 			preview: () => undefined,
+			pages: (p) => this.dropDeletedPlaceholders(p.file.split("/Note/")[1], p.count),
 			error: (e) => console.error("supersidian: live ink", e),
 		};
 		this.register(startLogStream(live));
@@ -571,6 +572,35 @@ export default class Supersidian extends Plugin {
 			write.finally(() => this.placeholderPngs.delete(pageid)).catch((e) => console.error("supersidian: placeholder page", e));
 		}
 		return all[page];
+	}
+
+	/**
+	 * The tablet now has `count` pages: placeholders past that were for pages since deleted.
+	 * Without this they stayed, since a sync keeps placeholders past the end of the file (the page
+	 * may not be saved yet), and a pen tap on the page menu is enough to create one.
+	 */
+	private dropDeletedPlaceholders(rel: string | undefined, count: number) {
+		const nb = rel ? this.data.state.notebooks[rel] : undefined;
+		if (!nb) return;
+		const ids = Object.keys(nb.pages);
+		const gone = ids.filter((pageid, i) => i >= count && nb.pages[pageid] === "");
+		if (!gone.length) return;
+		const pngs = pagePngs(layoutOf(nb).assetDir, ids);
+		for (const pageid of gone) {
+			const png = pngs.get(pageid)!;
+			this.layer.clear(png);
+			this.liveAt.delete(png);
+			this.inkAt.delete(png);
+			delete nb.pages[pageid];
+			delete nb.changedAt[pageid];
+			delete nb.blank?.[pageid];
+			delete nb.geometry?.[pageid];
+			delete nb.inked?.[pageid];
+			this.app.vault.adapter.remove(png).catch(() => undefined);
+		}
+		this.save()
+			.then(() => this.rewriteAll())
+			.catch((e) => console.error("supersidian: drop deleted pages", e));
 	}
 
 	/** Placeholders of `prev` that the synced file (`count` pages) does not have yet, to keep. */

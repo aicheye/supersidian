@@ -115,7 +115,7 @@ export async function saveNow(): Promise<boolean> {
 let messageId = 0;
 const CHUNK = 900;
 
-function emit(kind: 'pen' | 'ink' | 'erase', payload: object) {
+function emit(kind: 'pen' | 'ink' | 'erase' | 'pages', payload: object) {
   const json = JSON.stringify(payload);
   const id = `${Date.now().toString(36)}${(messageId++).toString(36)}`;
   const count = Math.max(1, Math.ceil(json.length / CHUNK));
@@ -197,9 +197,13 @@ interface Motion {
 /** Streams pen positions while a stroke is drawn, so the laptop can draw it before pen-up. */
 function onMotion(m: Motion) {
   const lifted = m.action === 1 || m.action === 3;
-  // Any tap may have turned or added a page (the page buttons, a finger swipe).
+  if (m.toolType !== 2) {
+    // Any finger event may be part of a swipe that turns the page; the check runs after the last one.
+    checkPage();
+    return;
+  }
+  // A pen tap may have turned or added a page (the page buttons).
   if (lifted) checkPage();
-  if (m.toolType !== 2) return; // strokes come from the pen only, not fingers
   if (m.action === 0) {
     penDown = true;
     strokeId++;
@@ -235,11 +239,30 @@ function pageSeen(key: string) {
   if (!first) saveLeftPage(key.slice(0, key.lastIndexOf('#')));
 }
 let checkingPage = false;
+/** A touch arrived during a check; check once more after it, since the page may have turned since. */
+let checkAgain = false;
+/** When the running check started, and a number that changes with each check. */
+let checkStarted = 0;
+let checkRun = 0;
+/**
+ * A check running longer than this is abandoned and a new one starts. 0.0.40 and 0.0.41 had a
+ * check that never returned (getCurrentPageNum while no notebook was open got no answer), after which every
+ * finger touch was skipped and only pen strokes noticed page changes.
+ */
+const CHECK_STUCK_MS = 3000;
+/** "<file>#<page count>" at the last check, to notice pages added or deleted from the page menu. */
+let lastCountKey: string | null = null;
 
-/** Reads the current page shortly after a tap, to notice page turns and new pages without a stroke. */
+/** Reads the current page shortly after a tap, to notice page turns, new pages and deleted pages without a stroke. */
 async function checkPage() {
-  if (checkingPage) return;
+  if (checkingPage && Date.now() - checkStarted < CHECK_STUCK_MS) {
+    checkAgain = true;
+    return;
+  }
+  const run = ++checkRun;
   checkingPage = true;
+  checkAgain = false;
+  checkStarted = Date.now();
   try {
     await waitUntil(Date.now(), 400);
     const path = (await PluginCommAPI.getCurrentFilePath()) as Response<string>;
@@ -248,8 +271,24 @@ async function checkPage() {
     fileSeen(file ?? null);
     if (!file || !file.toLowerCase().endsWith('.note') || !page?.success || page.result === undefined) return;
     pageSeen(`${file}#${page.result}`);
+    const count = (await PluginFileAPI.getNoteTotalPageNum(file)) as Response<number>;
+    if (count?.success && typeof count.result === 'number') {
+      const key = `${file}#${count.result}`;
+      // A deleted page can leave the page number unchanged, so pageSeen does not save for it.
+      if (key !== lastCountKey) {
+        if (lastCountKey?.startsWith(`${file}#`)) saveLeftPage(file);
+        // The laptop drops pages it drew from live ink that are past the new count.
+        emit('pages', {file, count: count.result});
+      }
+      lastCountKey = key;
+    }
   } finally {
-    checkingPage = false;
+    // An abandoned check that returns late leaves the newer one's state alone.
+    if (run === checkRun) {
+      checkingPage = false;
+      // Chained on the promise: timers pause while the plugin screen is closed.
+      if (checkAgain) checkPage();
+    }
   }
 }
 
