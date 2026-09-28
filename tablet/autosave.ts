@@ -1,5 +1,5 @@
 import { PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI } from 'sn-plugin-lib';
-import { getConfig, onUplinkChange, sendLive, setUplinkWait, uploadNote } from './uplink';
+import { getConfig, onUplinkChange, sendLive, setUplinkRest, setUplinkWait, uploadNote } from './uplink';
 
 /**
  * Saves the open notebook shortly after the pen stops, so the .note file on
@@ -354,6 +354,24 @@ async function waitForPenIdle() {
   }
 }
 
+/** How long the pen rests before an upload reads the notebook, and the longest an upload waits for that. */
+const UPLOAD_REST_MS = 3000;
+const UPLOAD_REST_MAX_MS = 30_000;
+
+/**
+ * Waits until the pen has been up for UPLOAD_REST_MS, or UPLOAD_REST_MAX_MS have passed, so that
+ * steady writing still uploads every 30 s. Like waitForPenIdle, it waits on the lift without
+ * polling while a stroke is drawn.
+ */
+async function waitForPenRest() {
+  const start = Date.now();
+  while (Date.now() - start < UPLOAD_REST_MAX_MS) {
+    if (penDown) await new Promise<void>(r => onLift.push(r));
+    else if (Date.now() - lastLift < UPLOAD_REST_MS) await PluginCommAPI.getCurrentPageNum();
+    else return;
+  }
+}
+
 interface Point {
   x: number;
   y: number;
@@ -414,6 +432,7 @@ async function sendInk(elements: StrokeElement[]) {
 export function startAutosave() {
   onUplinkChange(changed);
   setUplinkWait(ms => waitUntil(Date.now(), ms));
+  setUplinkRest(waitForPenRest);
   getConfig();
   PluginManager.registerMotionListener(2, {
     onMsg(msg: unknown) {
