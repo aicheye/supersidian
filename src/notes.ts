@@ -70,27 +70,23 @@ export function sectionIndex(folder: string): string {
 	return `${folder}/${folder.split("/").pop()}.md`;
 }
 
-const KINDS: Record<string, [prefix: string, kind: string]> = {
-	Lectures: ["LEC", "Lecture notes"],
-	Tutorials: ["TUT", "Tutorial notes"],
-	Labs: ["LAB", "Lab notes"],
-};
+/** File name prefix of a section's dated notes; other notebooks use their own name (Psets-2025-09-03.md). */
+const PREFIXES: Record<string, string> = { Lectures: "LEC", Tutorials: "TUT", Labs: "LAB" };
 
 /** Path of a new dated note in a section folder: Lectures -> LEC-2025-09-03.md, Psets -> Psets-2025-09-03.md. */
 export function datedNotePath(folder: string, date: string): string {
 	const name = folder.split("/").pop()!;
-	return `${folder}/${KINDS[name]?.[0] ?? name}-${date}.md`;
+	return `${folder}/${PREFIXES[name] ?? name}-${date}.md`;
 }
 
 /**
- * A new dated note for a day that has pages but no note, in the shape of the class notes. It is
- * titled "Lecture notes" rather than "Lecture": the day may have had no class (a page written on a
- * weekend), and it has no class time, so Home does not list it as a class.
+ * A new dated note for a day that has pages but no note, in the shape of the class notes. Its
+ * title is the date alone: the folders and the course line name the course and section. It has no
+ * class time, so Home does not list it as a class.
  */
 export function newDatedNote(folder: string, date: string): string {
 	const [term, course, name] = folder.split("/");
-	const kind = KINDS[name]?.[1] ?? name.replace(/_/g, " ");
-	return `# ${course} — ${kind} (${dateLabel(date, true)})\n**Course:** [[${term}/${course}/${course}|${course}]] · [[${sectionIndex(folder).replace(/\.md$/, "")}|${name.replace(/_/g, " ")}]]\n\n## Topics\n\n## Notes\n`;
+	return `# ${dateLabel(date, true)}\n**Course:** [[${term}/${course}/${course}|${course}]] · [[${sectionIndex(folder).replace(/\.md$/, "")}|${name.replace(/_/g, " ")}]]\n\n## Topics\n\n## Notes\n`;
 }
 
 /**
@@ -172,12 +168,6 @@ export function dateLabel(date: string, year = false): string {
 }
 
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
-
-/** "Lecture 5" from a heading like "# CS241E — Lecture 5 (Thu Sep 24, 2026)"; the file name otherwise. */
-function noteTitle(text: string, notePath: string): string {
-	const m = /^# .*? — (.+?)(?: \(|$)/m.exec(text);
-	return m ? m[1] : path.basename(notePath, ".md");
-}
 
 /** Bullet lines under a note's "## Topics" heading. */
 function topicLines(text: string): string[] {
@@ -535,11 +525,8 @@ export async function writeSectionIndex(
 			.map((l) => l.replace(/^\s*- /, "").trim())
 			.slice(0, 3)
 			.map((t) => (t.length > 40 ? `${t.slice(0, 39)}…` : t));
-		// A title that only repeats the section ("Lecture", "Psets") is left out; "Lecture 5" is shown.
-		const title = noteTitle(text, note);
-		const shown = /\d/.test(title) ? ` · ${title}` : "";
 		const day = dateLabel(date).replace(/, \d{4}$/, "");
-		lines.push(`- [[${note.replace(/\.md$/, "")}|${day}]]${shown}${topics.length ? ` — ${topics.join(" · ")}` : ""}`);
+		lines.push(`- [[${note.replace(/\.md$/, "")}|${day}]]${topics.length ? ` — ${topics.join(" · ")}` : ""}`);
 	}
 	if (lines.length) sections.push(lines.join("\n"));
 	if (undated.length) sections.push(`## Undated\n${blockBody(undated, null, [])}`);
@@ -548,7 +535,7 @@ export async function writeSectionIndex(
 	if (footer.length) sections.push(callout("supersidian", "Concepts and related notes", footer));
 	const before = (await vault.exists(index)) ? await vault.read(index) : null;
 	const label = name.replace(/_/g, " ");
-	const header = `# ${course} — ${label} (${term})\n**Course:** [[${term}/${course}/${course}|${course}]]`;
+	const header = `# ${label}\n**Course:** [[${term}/${course}/${course}|${course}]]`;
 	const next = applyIndex(before, header, sections.length ? sections : ["No notes yet."]);
 	if (next === before) return null;
 	await vault.write(index, next);

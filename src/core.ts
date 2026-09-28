@@ -113,7 +113,8 @@ export async function createCourse(vault: VaultIO, term: string, course: string)
 	if (!(await vault.exists(folder))) await vault.mkdir(folder);
 	const page = `${folder}/${C}.md`;
 	if (!(await vault.exists(page))) {
-		await vault.write(page, `# ${C} (${T})\n\nCreated by Supersidian when notebooks for this course appeared on the tablet. Each tablet notebook becomes a section folder here (Lectures, Tutorials, ...) with one note per day and an index note.\n`);
+		// Title like "CS 341": the code with a space before the number, as on the course calendar.
+		await vault.write(page, `# ${C.replace(/^([A-Z]+)(\d)/, "$1 $2")}\n\nCreated by Supersidian when notebooks for this course appeared on the tablet. Each tablet notebook becomes a section folder here (Lectures, Tutorials, ...) with one note per day and an index note.\n`);
 	}
 	return folder;
 }

@@ -121,7 +121,7 @@ test("a new term's course folder is created with a course page; other device fol
 		list: async () => ({ files: [], folders: [] }),
 	};
 	assert.equal(await createCourse(vault, "2b", "cs341"), "2B/CS341");
-	assert.match(await fs.readFile(abs("2B/CS341/CS341.md"), "utf8"), /^# CS341 \(2B\)/);
+	assert.match(await fs.readFile(abs("2B/CS341/CS341.md"), "utf8"), /^# CS 341\n/);
 	assert.equal(await createCourse(vault, "random", "screensaver"), null);
 	assert.equal(await createCourse(vault, "2b", "moss stuff"), null);
 });
@@ -162,7 +162,7 @@ test("a course page lists its sections, lectures first, and the list is replaced
 test("a day with pages and no note gets one in the notebook's section folder", () => {
 	assert.equal(datedNotePath("1A/MATH115/Lectures", "2025-09-03"), "1A/MATH115/Lectures/LEC-2025-09-03.md");
 	assert.equal(datedNotePath("1A/MATH117/Psets", "2025-09-10"), "1A/MATH117/Psets/Psets-2025-09-10.md");
-	assert.match(newDatedNote("1A/MATH115/Lectures", "2025-09-03"), /^# MATH115 — Lecture notes \(Wed Sep 03, 2025\)\n\*\*Course:\*\* \[\[1A\/MATH115\/MATH115\|MATH115\]\] · \[\[1A\/MATH115\/Lectures\/Lectures\|Lectures\]\]\n\n## Topics\n\n## Notes\n$/);
+	assert.match(newDatedNote("1A/MATH115/Lectures", "2025-09-03"), /^# Wed Sep 03, 2025\n\*\*Course:\*\* \[\[1A\/MATH115\/MATH115\|MATH115\]\] · \[\[1A\/MATH115\/Lectures\/Lectures\|Lectures\]\]\n\n## Topics\n\n## Notes\n$/);
 });
 
 test("a # that would start a tag is escaped, except in headings, code and math", () => {

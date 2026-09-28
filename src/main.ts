@@ -1089,13 +1089,15 @@ export default class Supersidian extends Plugin {
 				for (const f of (await vault.list(sub)).files) {
 					if (!f.endsWith(`${date}.md`)) continue;
 					const text = await vault.read(f);
-					const title = /^# .*? — (.+?)(?: \(|$)/m.exec(text)?.[1] ?? f;
+					// "CS241E", or "ECE222 lab" for a class that is not a lecture; the time is shown beside it.
+					const section = f.replace(/^\/+/, "").split("/")[2] ?? "";
+					const kind = { Tutorials: " tutorial", Labs: " lab" }[section] ?? "";
 					// Only scheduled classes: notes the plugin created for a day's pages have no time.
 					const minutes = classStart(text);
 					if (minutes === null) continue;
 					// "· 11:30 AM–12:50 PM, MC 2066 ·" on the note's course line
 					const when = /· (\d{1,2}:\d{2} ?[AP]M[^·\n]*?)(?: ·|\n|$)/.exec(text)?.[1]?.trim();
-					found.push({ path: f.replace(/^\/+/, ""), label: `${courseName} ${title}`, when, minutes });
+					found.push({ path: f.replace(/^\/+/, ""), label: `${courseName}${kind}`, when, minutes });
 				}
 			}
 		}
@@ -1129,13 +1131,13 @@ export default class Supersidian extends Plugin {
 			}
 			if (!found) continue;
 			const { path, date, text } = found;
-			const title = /^# .*? — (.+?)(?: \(|$)/m.exec(text)?.[1] ?? "";
+
 			const section = /^## Topics[ \t]*\n([^]*?)(?=^## |<!-- supersidian:begin|(?![^]))/m.exec(text)?.[1] ?? "";
 			const topics = section
 				.split("\n")
 				.map((l) => /^\s*- (.+)$/.exec(l)?.[1]?.trim())
 				.filter((t): t is string => !!t && t !== "[ ]");
-			out.push({ path, label: `${course.split("/").pop()} ${title}`.trim(), date, topics });
+			out.push({ path, label: `${course.split("/").pop()} · ${dateLabel(date)}`, date, topics });
 		}
 		return out.sort((a, b) => b.date.localeCompare(a.date));
 	}
