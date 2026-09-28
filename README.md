@@ -23,6 +23,8 @@ Two plugins work together:
 - `assets/notes/<Notebook>/<YYYYMMDD-HHMMSS>.png`: one image per page, named from the creation time in the page ID (`P<YYYYMMDDHHMMSS>…`, device local time). Pages created in the same second also get the microseconds. `styles.css` hides `assets` folders in the file explorer.
 - `<TERM>/<TERM>.md`: the term's course list.
 
+Titles repeat nothing the folders already say: a day's note is titled by its date (`# Thu Sep 24, 2026`), a section index by the section (`# Lectures`), and a course page by its code with the course's name on the next line (`# CS 241E`). Home lists classes as `CS241E · Thu Sep 24`.
+
 **Your text is kept.** Text typed under a page image inside the block stays with that page across syncs. Text under a deleted page moves to the end of the block.
 
 **Rendering.** Pages render at full page size as ink only (no template), with darkness as opacity. `styles.css` draws each image as a mask over `--text-normal`, so ink follows the theme. Blank pages are not embedded.
