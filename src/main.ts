@@ -1103,6 +1103,9 @@ export default class Supersidian extends Plugin {
 				await new Promise((r) => window.setTimeout(r, 500));
 			}
 			await this.rewriting;
+			// The rewrite after a transcription batch skips open notes (rewriteNotes); this command
+			// was run on the open note, so it is rewritten now, through its editor.
+			await this.rewriteAll();
 			const failed = todo.filter((p) => this.extras[p.pageid]?.hash !== p.hash).length;
 			if (failed) progress.fail(`Supernote: ${failed} of ${label} failed to transcribe (see the developer console).`);
 			else progress.done(`Supernote: transcribed ${label}; topics and concepts updated.`);
