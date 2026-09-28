@@ -440,6 +440,13 @@ export class InkLayer {
 		}
 	}
 
+	/** Whether a page shows any finished live stroke that no eraser has hidden. */
+	hasInk(png: string): boolean {
+		const svg = this.overlays.get(png)?.svg;
+		if (!svg) return false;
+		return Array.from(svg.querySelectorAll<SVGPathElement>("path[data-at]:not(.supersidian-live-eraser)")).some((el) => el.style.display !== "none");
+	}
+
 	/** Sets an in-progress line's color and width once the stroke's pen is known. */
 	stylePending(id: number, pen: PenInfo, width: number) {
 		const p = this.pending.get(id);

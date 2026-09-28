@@ -156,6 +156,9 @@ export default class Supersidian extends Plugin {
 			penScale: saved.penScale ?? {},
 			pushToken: saved.pushToken ?? randomBytes(24).toString("base64url"),
 		};
+		// Live strokes do not survive a restart, so blank pages embedded for them have nothing to
+		// show; the rewrite after layout drops them. New strokes embed them again.
+		for (const nb of Object.values(this.data.state.notebooks)) delete nb.inked;
 		// Version 2 lowered the poll interval from 10 s to 1 s.
 		if ((saved.settingsVersion ?? 1) < 2) this.data.settings.pollSeconds = DEFAULT_SETTINGS.pollSeconds;
 		this.data.settingsVersion = SETTINGS_VERSION;
@@ -172,6 +175,7 @@ export default class Supersidian extends Plugin {
 				const line = this.layer.pendingLine(e.stroke);
 				if (line) this.finishErase(e.stroke, line.points);
 				this.layer.eraseWith(e.stroke);
+				this.unembedErased(e.stroke);
 			},
 			pen: (pen) => this.onPen(pen),
 			// The tablet's page snapshots render the saved file, not unsaved strokes, so they are not used.
@@ -678,6 +682,22 @@ export default class Supersidian extends Plugin {
 		}
 		this.eraseAlong(id, points);
 		this.eraseAlong(id, points, true);
+	}
+
+	/**
+	 * A blank page embedded only for its live ink (`inked`) whose live strokes eraser motion `id`
+	 * has all erased: leave it out again. Without this it stayed in the note until the tablet's
+	 * next save, and the note app often does not save after an erase, since the file is unchanged.
+	 */
+	private unembedErased(id: number) {
+		const m = this.motionPages.get(id);
+		if (!m) return;
+		const nb = this.data.state.notebooks[m.rel];
+		if (!nb?.blank?.[m.pageid] || !nb.inked?.[m.pageid] || this.layer.hasInk(m.png)) return;
+		delete nb.inked[m.pageid];
+		if (!Object.keys(nb.inked).length) delete nb.inked;
+		this.inkAt.delete(m.png);
+		this.rewriteAll().catch((e) => console.error("supersidian: unembed page", e));
 	}
 
 	/** pageid -> confirmed eraser motions that arrived before the page's strokes had loaded */
