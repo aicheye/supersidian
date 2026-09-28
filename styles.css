@@ -16,6 +16,13 @@ img.supersidian-ink {
 	height: auto;
 	aspect-ratio: 1920 / 2560;
 }
+/* The embed around a page image has the page's height before the image exists too. A new image
+   file rendered at zero height for a frame, and a page on screen swapped for a new file (a
+   placeholder replaced by the saved page) clamped the scroll up by the difference. */
+.internal-embed.image-embed[src*="/assets/notes/"] {
+	width: 100%;
+	aspect-ratio: 1920 / 2560;
+}
 
 /* Strokes drawn live from the tablet. The layer is fixed over the window (not inside the
    editor), and each page's SVG is moved onto its image every frame; see InkLayer in live.ts. */
@@ -76,4 +83,25 @@ svg.supersidian-live path.supersidian-live-pending.supersidian-live-lasso {
    (the faint gray looked muddy next to them). */
 .graph-view.color-fill-tag {
 	color: var(--text-muted);
+}
+
+/* Progress notices of Supersidian commands (src/progress.ts). */
+.notice.supersidian-progress {
+	min-width: 260px;
+}
+.supersidian-progress-title {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--size-4-3);
+}
+.supersidian-progress-clock,
+.supersidian-progress-detail {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-variant-numeric: tabular-nums;
+}
+.notice.supersidian-progress progress {
+	display: block;
+	width: 100%;
+	margin: var(--size-4-2) 0 var(--size-4-1);
 }

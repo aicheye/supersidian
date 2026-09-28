@@ -2,6 +2,7 @@ import { spawn } from "child_process";
 import { promises as fs } from "fs";
 import * as os from "os";
 import * as path from "path";
+import { deflateSync } from "zlib";
 
 import { adbList, adbPull, adbPullFrom, adbStat, clockSkewMs } from "./adb";
 import {
@@ -227,9 +228,47 @@ export interface SyncOptions {
 	inked?: (savedAt: number) => Record<string, boolean>;
 	/** receives the visible strokes of each re-rendered page */
 	strokes?: (pageid: string, strokes: PageStroke[]) => void;
+	/**
+	 * Placeholder pages (hash "") for pages the tablet has drawn on but not saved yet, given the
+	 * number of pages in the synced file. They are kept after the file's pages, blank.
+	 */
+	placeholders?: (count: number) => { pageid: string; width: number }[];
 }
 
 export { noteConcepts, writeNotebookNotes };
+
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+	let c = n;
+	for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+	return c >>> 0;
+});
+
+function pngChunk(type: string, data: Buffer): Buffer {
+	const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
+	let crc = 0xffffffff;
+	for (const b of body) crc = CRC_TABLE[(crc ^ b) & 0xff] ^ (crc >>> 8);
+	const out = Buffer.alloc(body.length + 8);
+	out.writeUInt32BE(data.length, 0);
+	body.copy(out, 4);
+	out.writeUInt32BE((crc ^ 0xffffffff) >>> 0, body.length + 4);
+	return out;
+}
+
+/** A fully transparent gray+alpha PNG, the image render.py makes for a page with no ink. */
+export function blankPng(width: number, height: number): Buffer {
+	const header = Buffer.alloc(13);
+	header.writeUInt32BE(width, 0);
+	header.writeUInt32BE(height, 4);
+	header.set([8, 4, 0, 0, 0], 8);
+	// Each row: filter byte 0, then 2 zero bytes per pixel.
+	const rows = Buffer.alloc((width * 2 + 1) * height);
+	return Buffer.concat([
+		Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+		pngChunk("IHDR", header),
+		pngChunk("IDAT", deflateSync(rows)),
+		pngChunk("IEND", Buffer.alloc(0)),
+	]);
+}
 
 /** Local copies of tablet notebooks from their last sync, for pulling only what was appended. */
 const PULL_CACHE = path.join(os.tmpdir(), "supersidian-pulls");
@@ -343,6 +382,8 @@ export async function syncNotebook(
 			}
 		}
 		for (const p of pages) if (p.strokes) opts.strokes?.(p.pageid, p.strokes);
+		const later = opts.placeholders?.(pages.length) ?? [];
+		for (const png of pagePngs(assetDir, later.map((p) => p.pageid)).values()) wanted.add(png);
 		for (const p of pages) {
 			const target = pngs.get(p.pageid)!;
 			wanted.add(target);
@@ -359,7 +400,7 @@ export async function syncNotebook(
 			name,
 			mtimeMs: nb.mtimeMs,
 			size: nb.size,
-			pages: Object.fromEntries(pages.map((p) => [p.pageid, p.hash])),
+			pages: Object.fromEntries([...pages.map((p) => [p.pageid, p.hash]), ...later.map((p) => [p.pageid, ""])]),
 			// A page seen for the first time in an initial sync counts as long unchanged.
 			changedAt: Object.fromEntries(
 				pages.map((p) => {
@@ -381,6 +422,11 @@ export async function syncNotebook(
 				}),
 			),
 		};
+		for (const p of later) {
+			state.changedAt[p.pageid] = prev?.changedAt?.[p.pageid] ?? now;
+			state.blank![p.pageid] = true;
+			state.geometry![p.pageid] = [0, p.width];
+		}
 		const out = await writeNotebookNotes(vault, state, opts.extras ?? {}, opts.concepts ?? new Map());
 		state.notes = out.holding;
 

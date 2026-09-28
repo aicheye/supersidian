@@ -503,6 +503,16 @@ export class InkLayer {
 		}
 	}
 
+	/** Moves a page's live strokes to another image, when a placeholder page gets its real image. */
+	rename(from: string, to: string) {
+		const o = this.overlays.get(from);
+		if (!o || this.overlays.has(to)) return;
+		this.overlays.delete(from);
+		o.png = to;
+		this.overlays.set(to, o);
+		this.schedule();
+	}
+
 	/**
 	 * Removes live strokes over a page: all of them, or with `before`, the finished strokes that
 	 * arrived before that time (the ones a newly synced image contains).

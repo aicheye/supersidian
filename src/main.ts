@@ -16,7 +16,7 @@ import {
 	syncNotebook,
 	VaultIO,
 } from "./core";
-import { cachePath, PageStroke, readPageStrokes } from "./core";
+import { blankPng, cachePath, PageStroke, readPageStrokes } from "./core";
 import {
 	dateLabel,
 	Extras,
@@ -32,6 +32,7 @@ import { findClaude, transcribePages } from "./transcribe";
 import { hideMarkers } from "./hide";
 import { deliverLive, InkLayer, insidePolygon, LASSO_PEN, LiveHandlers, LiveInk, LivePen, PenInfo, Point, PX_PER_PEN_UNIT, startLogStream } from "./live";
 import { randomBytes } from "crypto";
+import { Progress } from "./progress";
 import { checkInbox } from "./inbox";
 import { signature, syncCalendar } from "./calendar";
 import {
@@ -246,6 +247,7 @@ export default class Supersidian extends Plugin {
 		this.registerEvent(this.app.workspace.on("layout-change", showStatus));
 		this.register(() => this.statusEl.parentElement?.removeClass("supersidian-empty"));
 
+		this.addCommand({ id: "process-note", name: "Process this note now (sync, transcribe, topics)", callback: () => this.processNote(false) });
 		this.addCommand({ id: "sync-now", name: "Sync now", callback: () => this.sync({ manual: true }) });
 		this.addCommand({
 			id: "resync-all",
@@ -255,7 +257,7 @@ export default class Supersidian extends Plugin {
 		this.addCommand({
 			id: "retranscribe-note",
 			name: "Transcribe the pages in this note again",
-			callback: () => this.retranscribeActive(),
+			callback: () => this.processNote(true),
 		});
 		this.addSettingTab(new SettingsTab(this.app, this));
 		this.registerInterval(window.setInterval(() => this.transcribeNext(), 5_000));
@@ -395,47 +397,20 @@ export default class Supersidian extends Plugin {
 	}
 
 	/**
-	 * Runs an edit to an open note, then puts each view of it back at the line it was showing.
-	 * Adding or removing a page image re-lays out the note and would otherwise move the view.
-	 * The position is restored again after images have had time to load and change heights.
+	 * Applies an edit to an open note without moving what is on screen. In source and live preview
+	 * mode CodeMirror keeps the text at the top of the view in place by itself, as long as page
+	 * images keep their height while loading (styles.css). The plugin used to correct the scroll
+	 * as well, which moved the view by the height of a page added just below the one on screen.
+	 * Reading mode is put back at the line it showed.
 	 */
-	/**
-	 * Applies an edit to an open note without moving what is on screen. In source and live
-	 * preview mode, the text at the top of the view is the anchor: after CodeMirror lays out the
-	 * change, the view scrolls by exactly how far that text moved, in one step. (Restoring a line
-	 * number instead snapped a partly scrolled page image, which is one line, to its top.) An edit
-	 * that changes the text on screen itself leaves the scroll alone.
-	 */
-	private keepScroll(p: string, edit: () => EditMap | null) {
+	private keepScroll(p: string, edit: () => boolean) {
 		const views = this.app.workspace
 			.getLeavesOfType("markdown")
 			.map((l) => l.view)
-			.filter((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === p);
-		const anchors = views.map((v) => {
-			const cm = (v.editor as unknown as { cm?: EditorView }).cm;
-			if (v.getMode() !== "source" || !cm) return { v, line: v.currentMode.getScroll() };
-			const box = cm.scrollDOM.getBoundingClientRect();
-			const pos = cm.posAtCoords({ x: box.left + box.width / 2, y: box.top + 1 }, false);
-			const top = cm.coordsAtPos(pos)?.top;
-			return { v, cm, pos, top };
-		});
-		const change = edit();
-		if (!change) return;
-		for (const a of anchors) {
-			if (!("cm" in a) || !a.cm) {
-				requestAnimationFrame(() => a.v.currentMode.applyScroll(a.line));
-				continue;
-			}
-			const { cm, pos, top } = a;
-			if (top === undefined || change.replaced(pos)) continue;
-			const moved = change.map(pos);
-			cm.requestMeasure({
-				read: () => cm.coordsAtPos(moved)?.top,
-				write: (now) => {
-					if (now !== undefined && Math.abs(now - top) > 0.5) cm.scrollDOM.scrollTop += now - top;
-				},
-			});
-		}
+			.filter((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === p && v.getMode() !== "source");
+		const lines = views.map((v) => v.currentMode.getScroll());
+		if (!edit()) return;
+		views.forEach((v, i) => requestAnimationFrame(() => v.currentMode.applyScroll(lines[i])));
 	}
 
 	private openEditor(p: string): Editor | null {
@@ -541,23 +516,88 @@ export default class Supersidian extends Plugin {
 		}
 	}
 
-	/** The page image and geometry for a tablet notebook page, if it has synced before. */
+	/**
+	 * The page image and geometry for a tablet notebook page, if the notebook has synced before.
+	 * A page the synced copy does not have yet gets a placeholder (addPlaceholders).
+	 */
 	private pageTarget(rel: string, page: number, inkWidth: number, inked = false) {
 		const nb = this.data.state.notebooks[rel];
 		if (!nb) return null;
 		const ids = Object.keys(nb.pages);
-		const pageid = ids[page];
-		if (!pageid) return null;
+		const pageid = ids[page] ?? this.addPlaceholders(nb, page, inkWidth);
 		// A finished stroke on a page left out as blank: mark it written on and embed it now, so
 		// the strokes have an image to draw over. Pen motions alone do not count, since eraser
 		// and lasso motions on a blank page send them too.
 		if (inked && nb.blank?.[pageid] && !nb.inked?.[pageid]) {
 			(nb.inked ??= {})[pageid] = true;
-			this.rewriteAll().catch((e) => console.error("supersidian: embed page", e));
+			(this.placeholderPngs.get(pageid) ?? Promise.resolve())
+				.then(() => this.rewriteAll())
+				.catch((e) => console.error("supersidian: embed page", e));
 		}
 		const png = pagePngs(layoutOf(nb).assetDir, ids).get(pageid)!;
 		const [top, renderWidth] = nb.geometry?.[pageid] ?? [0, inkWidth];
 		return { png, top, renderWidth, pageid };
+	}
+
+	/** pageid -> write of its placeholder image */
+	private placeholderPngs = new Map<string, Promise<void>>();
+
+	/**
+	 * The tablet writes a page to the file only when it saves, which it does when you leave the
+	 * page. Until then the page gets a placeholder: a blank page (hash "") with an empty image,
+	 * named from the current time, so live ink shows at once in today's note. Returns the id for
+	 * `page`, adding placeholders for any pages before it that are missing too. The sync that
+	 * has the page replaces the placeholder (adoptPlaceholders).
+	 */
+	private addPlaceholders(nb: NotebookState, page: number, width: number): string {
+		const d = new Date();
+		const two = (n: number) => String(n).padStart(2, "0");
+		const stamp = `${d.getFullYear()}${two(d.getMonth() + 1)}${two(d.getDate())}${two(d.getHours())}${two(d.getMinutes())}${two(d.getSeconds())}`;
+		const ids = Object.keys(nb.pages);
+		for (let i = ids.length; i <= page; i++) {
+			const pageid = `P${stamp}${String(i).padStart(6, "0")}live`;
+			nb.pages[pageid] = "";
+			nb.changedAt[pageid] = Date.now();
+			(nb.blank ??= {})[pageid] = true;
+			(nb.geometry ??= {})[pageid] = [0, width];
+		}
+		const all = Object.keys(nb.pages);
+		const pngs = pagePngs(layoutOf(nb).assetDir, all);
+		for (const pageid of all.slice(ids.length)) {
+			// The Nomad's and A5X's pages are 3:4.
+			const buf = blankPng(width, Math.round((width * 4) / 3));
+			const write = this.app.vault.adapter.writeBinary(pngs.get(pageid)!, buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer);
+			this.placeholderPngs.set(pageid, write);
+			write.finally(() => this.placeholderPngs.delete(pageid)).catch((e) => console.error("supersidian: placeholder page", e));
+		}
+		return all[page];
+	}
+
+	/** Placeholders of `prev` that the synced file (`count` pages) does not have yet, to keep. */
+	private keptPlaceholders(prev: NotebookState, count: number): { pageid: string; width: number }[] {
+		return Object.entries(prev.pages)
+			.map(([pageid, hash], i) => ({ pageid, hash, i }))
+			.filter((p) => p.hash === "" && p.i >= count)
+			.map((p) => ({ pageid: p.pageid, width: prev.geometry?.[p.pageid]?.[1] ?? 1920 }));
+	}
+
+	/** Moves the live ink of placeholders the sync replaced with real pages onto those pages' images. */
+	private adoptPlaceholders(prev: NotebookState, next: NotebookState) {
+		const dir = layoutOf(next).assetDir;
+		const before = pagePngs(dir, Object.keys(prev.pages));
+		const ids = Object.keys(next.pages);
+		const after = pagePngs(dir, ids);
+		Object.keys(prev.pages).forEach((pageid, i) => {
+			if (prev.pages[pageid] !== "" || next.pages[pageid] !== undefined || !ids[i]) return;
+			const from = before.get(pageid)!;
+			const to = after.get(ids[i])!;
+			this.layer.rename(from, to);
+			for (const m of [this.liveAt, this.inkAt]) {
+				const at = m.get(from);
+				m.delete(from);
+				if (at !== undefined) m.set(to, Math.max(at, m.get(to) ?? 0));
+			}
+		});
 	}
 
 	/** Draws strokes the tablet just finished over the matching page image. */
@@ -768,9 +808,16 @@ export default class Supersidian extends Plugin {
 		return path.join(adapter.getBasePath(), this.manifest.dir ?? "", "render.py");
 	}
 
-	async sync({ manual = false, force = false }: { manual?: boolean; force?: boolean }) {
-		if (this.busy) return;
+	async sync({ manual = false, force = false, progress }: { manual?: boolean; force?: boolean; progress?: Progress }) {
+		if (this.busy) {
+			// A manual sync waits for the running one, then runs, so it covers the latest save.
+			if (!manual) return;
+			while (this.busy) await new Promise((r) => window.setTimeout(r, 200));
+		}
 		this.busy = true;
+		const owned = manual && !progress;
+		if (owned) progress = new Progress(force ? "Supernote: re-rendering every page" : "Supernote: syncing");
+		progress?.status("Looking for the tablet");
 		try {
 			// adb first; the desktop's MTP mount only when adb has no tablet.
 			let notebooks = await listAdbNotebooks();
@@ -784,7 +831,7 @@ export default class Supersidian extends Plugin {
 				const root = await findDeviceNoteRoot();
 				if (!root) {
 					this.setStatus({ kind: "absent" });
-					if (manual) new Notice("Supernote not connected (USB or Tailscale).");
+					if (owned) progress?.fail("Supernote not connected (USB or Tailscale).");
 					return;
 				}
 				notebooks = await listDeviceNotebooks(root);
@@ -792,11 +839,15 @@ export default class Supersidian extends Plugin {
 			}
 			const results: NotebookResult[] = [];
 			const vault = this.io();
-			for (const nb of notebooks) {
+			const todo = notebooks.filter((nb) => {
 				const prev = this.data.state.notebooks[nb.rel];
 				// Notebooks synced before blank pages and geometry were recorded sync once more to record them.
 				const unmeasured = !!prev && (prev.renderLayout !== RENDER_LAYOUT || Object.keys(prev.pages).some((id) => !prev.geometry?.[id]));
-				if (!force && !unmeasured && !changed(nb, prev)) continue;
+				return force || unmeasured || changed(nb, prev);
+			});
+			for (const [i, nb] of todo.entries()) {
+				const prev = this.data.state.notebooks[nb.rel];
+				progress?.step(i, todo.length, `rendering ${nb.rel.replace(/\.note$/, "")}`);
 				this.setStatus({ kind: "syncing", what: nb.rel });
 				// A stuck step (adb, renderer) must not leave the plugin busy and stop all syncing.
 				const out = await withTimeout(SYNC_TIMEOUT_MS, `sync of ${nb.rel}`, syncNotebook(vault, nb, prev, {
@@ -807,9 +858,11 @@ export default class Supersidian extends Plugin {
 					concepts: await this.conceptMap(),
 					inked: (savedAt) => (prev ? this.inkedSince(prev, savedAt) : {}),
 					strokes: (pageid, strokes) => this.pageStrokes.set(pageid, strokes),
+					placeholders: (count) => (prev ? this.keptPlaceholders(prev, count) : []),
 				}));
 				if (!out) continue;
 				this.data.state.notebooks[nb.rel] = out.state;
+				if (prev) this.adoptPlaceholders(prev, out.state);
 				this.settleLive(out.state);
 				results.push(out.result);
 				await this.save();
@@ -823,14 +876,18 @@ export default class Supersidian extends Plugin {
 			}
 			this.failures = 0;
 			this.setStatus({ kind: "idle" });
-			this.report(results, manual);
+			if (owned) progress?.done(this.report(results));
 		} catch (e) {
 			if (e instanceof NotebookBusy && !manual) return;
+			if (e instanceof NotebookBusy) {
+				if (owned) progress?.fail("Supernote: the tablet was saving; run the command again.");
+				return;
+			}
 			const message = e instanceof Error ? e.message : String(e);
 			console.error("supersidian", e);
 			if (++this.failures < ERROR_AFTER && !manual) return;
 			this.setStatus({ kind: "error", message });
-			if (manual) new Notice(`Supernote sync failed: ${message}`);
+			if (manual) progress?.fail(`Supernote sync failed: ${message}`);
 		} finally {
 			this.busy = false;
 		}
@@ -936,15 +993,18 @@ export default class Supersidian extends Plugin {
 			for (const [pageid, hash] of Object.entries(nb.pages)) {
 				if (this.extras[pageid]?.hash === hash || nb.blank?.[pageid] || this.transcribing.has(pageid)) continue;
 				const date = /^P(\d{4})(\d{2})(\d{2})/.exec(pageid);
-				if (isOpen(layout.datedFolder, layout.indexPath, date ? `${date[1]}-${date[2]}-${date[3]}` : undefined)) continue;
-				if (now - (nb.changedAt?.[pageid] ?? 0) < stable) continue;
-				if (now - (this.failed.get(pageid) ?? 0) < RETRY_MS) continue;
+				// Pages a command asked for (processNote) do not wait.
+				if (!this.requested.has(pageid)) {
+					if (isOpen(layout.datedFolder, layout.indexPath, date ? `${date[1]}-${date[2]}-${date[3]}` : undefined)) continue;
+					if (now - (nb.changedAt?.[pageid] ?? 0) < stable) continue;
+					if (now - (this.failed.get(pageid) ?? 0) < RETRY_MS) continue;
+				}
 				candidates.push({ pageid, hash, png: pngs.get(pageid)!, context: layout.label, rel });
 			}
 		}
 		if (!candidates.length) return false;
-		// Newest page first; the rest of the batch comes from the same notebook.
-		candidates.sort((a, b) => b.pageid.localeCompare(a.pageid));
+		// Requested pages first, then newest first; the rest of the batch comes from the same notebook.
+		candidates.sort((a, b) => Number(this.requested.has(b.pageid)) - Number(this.requested.has(a.pageid)) || b.pageid.localeCompare(a.pageid));
 		const batch = candidates.filter((c) => c.rel === candidates[0].rel).slice(0, TRANSCRIBE_BATCH);
 		for (const b of batch) this.transcribing.add(b.pageid);
 		this.inflight++;
@@ -976,33 +1036,79 @@ export default class Supersidian extends Plugin {
 			console.error("supersidian: transcription failed", batch.map((b) => b.pageid), e);
 			for (const b of batch) this.failed.set(b.pageid, Date.now());
 		} finally {
-			for (const b of batch) this.transcribing.delete(b.pageid);
+			for (const b of batch) {
+				this.transcribing.delete(b.pageid);
+				this.requested.delete(b.pageid);
+			}
 			this.inflight--;
 			this.render();
 		}
 	}
 
-	/** Drops the transcripts of the pages in the active note so they are transcribed again. */
-	private async retranscribeActive() {
+	/** pages a command asked to transcribe now, even while their note is open */
+	private requested = new Set<string>();
+
+	/** The tablet pages shown in the active dated note, with their current hashes. */
+	private activePages(): { pageid: string; hash: string }[] | null {
 		const file = this.app.workspace.getActiveFile();
 		const date = file && /(\d{4}-\d{2}-\d{2})\.md$/.exec(file.path)?.[1];
-		if (!file || !date) {
+		if (!file || !date) return null;
+		const out: { pageid: string; hash: string }[] = [];
+		for (const nb of Object.values(this.data.state.notebooks)) {
+			if (!nb.course || !file.path.startsWith(`${layoutOf(nb).datedFolder}/`)) continue;
+			for (const [pageid, hash] of Object.entries(nb.pages)) {
+				if (pageid.slice(1, 9) === date.replace(/-/g, "") && !nb.blank?.[pageid]) out.push({ pageid, hash });
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Brings the active note fully up to date: syncs the tablet, then transcribes its pages that
+	 * have no transcript for their current ink (all of them with `again`), which also rewrites
+	 * topics and concept tags. One notice shows the progress throughout.
+	 */
+	private async processNote(again: boolean) {
+		if (!this.activePages()) {
 			new Notice("Open a dated lecture note first.");
 			return;
 		}
-		const course = file.path.split("/").slice(0, 2).join("/");
-		let n = 0;
-		for (const nb of Object.values(this.data.state.notebooks)) {
-			if (nb.course !== course) continue;
-			for (const pageid of Object.keys(nb.pages)) {
-				if (pageid.slice(1, 9) !== date.replace(/-/g, "")) continue;
-				delete this.extras[pageid];
-				this.failed.delete(pageid);
-				nb.changedAt[pageid] = 0;
-				n++;
-			}
+		if (!this.data.settings.transcribe) {
+			new Notice("Transcription is off in the Supersidian settings.");
+			return;
 		}
-		new Notice(`Supernote: transcribing ${n} page${n === 1 ? "" : "s"} again.`);
+		const progress = new Progress(again ? "Supernote: transcribing this note again" : "Supernote: processing this note");
+		try {
+			await this.sync({ manual: true, progress });
+			const pages = this.activePages() ?? [];
+			const todo = pages.filter((p) => again || this.extras[p.pageid]?.hash !== p.hash);
+			if (!todo.length) {
+				progress.done(pages.length ? "Supernote: this note is up to date." : "Supernote: this note has no pages yet.");
+				return;
+			}
+			for (const p of todo) {
+				if (again) delete this.extras[p.pageid];
+				this.failed.delete(p.pageid);
+				this.requested.add(p.pageid);
+			}
+			this.transcribeNext();
+			const n = todo.length;
+			const label = `${n} page${n === 1 ? "" : "s"}`;
+			const deadline = Date.now() + PROCESS_TIMEOUT_MS;
+			for (;;) {
+				const left = todo.filter((p) => this.requested.has(p.pageid)).length;
+				progress.step(n - left, n, left ? `transcribing ${label} with Claude` : "updating the note");
+				if (!left) break;
+				if (Date.now() > deadline) throw new Error(`transcription took over ${PROCESS_TIMEOUT_MS / 60_000} minutes`);
+				await new Promise((r) => window.setTimeout(r, 500));
+			}
+			await this.rewriting;
+			const failed = todo.filter((p) => this.extras[p.pageid]?.hash !== p.hash).length;
+			if (failed) progress.fail(`Supernote: ${failed} of ${label} failed to transcribe (see the developer console).`);
+			else progress.done(`Supernote: transcribed ${label}; topics and concepts updated.`);
+		} catch (e) {
+			progress.fail(`Supernote: ${e instanceof Error ? e.message : e}`);
+		}
 	}
 
 	/**
@@ -1205,6 +1311,7 @@ export default class Supersidian extends Plugin {
 		if (!(await vault.exists(DEADLINES))) return;
 		this.inboxBusy = true;
 		const started = new Date();
+		let progress: Progress | undefined;
 		try {
 			const today = isoDate(started);
 			const recent = isoDate(new Date(started.getTime() - 14 * 86_400_000));
@@ -1221,7 +1328,8 @@ export default class Supersidian extends Plugin {
 			}
 			const courses = [...current.keys()];
 			const since = this.data.lastInbox ?? recent;
-			if (manual) new Notice("Supernote: checking email…");
+			progress = manual ? new Progress("Supernote: checking email") : undefined;
+			progress?.status("Claude is reading recent course email");
 			const claude = await findClaude(this.data.settings.claudePath);
 			const actions = await checkInbox(claude, this.data.settings.model, open, courses, since);
 			const messages: string[] = [];
@@ -1252,10 +1360,12 @@ export default class Supersidian extends Plugin {
 			this.data.lastInbox = today;
 			await this.save();
 			for (const m of messages) new Notice(m, 8000);
-			if (manual && !messages.length) new Notice("Supernote: no new deadlines or date changes in email.");
+			progress?.done(messages.length ? `Supernote: ${messages.length} deadline change${messages.length === 1 ? "" : "s"} from email.` : "Supernote: no new deadlines or date changes in email.");
 		} catch (e) {
 			console.error("supersidian: inbox", e);
-			if (manual) new Notice(`Email check failed: ${e instanceof Error ? e.message : e}`);
+			const text = `Email check failed: ${e instanceof Error ? e.message : e}`;
+			if (progress) progress.fail(text);
+			else if (manual) new Notice(text);
 		} finally {
 			this.inboxBusy = false;
 		}
@@ -1272,6 +1382,7 @@ export default class Supersidian extends Plugin {
 		const vault = this.io();
 		if (!(await vault.exists(DEADLINES))) return;
 		this.calendarBusy = true;
+		let progress: Progress | undefined;
 		try {
 			const synced = (this.data.calendar ??= {});
 			const from = isoDate(new Date(Date.now() - 86_400_000));
@@ -1283,7 +1394,8 @@ export default class Supersidian extends Plugin {
 				if (manual) new Notice("Google Calendar is up to date.");
 				return;
 			}
-			if (manual) new Notice(`Syncing ${pending.length} deadline${pending.length === 1 ? "" : "s"} to Google Calendar…`);
+			progress = manual ? new Progress("Supernote: syncing Google Calendar") : undefined;
+			progress?.status(`Claude is updating ${pending.length} event${pending.length === 1 ? "" : "s"}`);
 			const claude = await findClaude(this.data.settings.claudePath);
 			const entries = await syncCalendar(claude, this.data.settings.model, pending.map((d) => ({ d, eventId: synced[d.id]?.eventId })));
 			for (const e of entries) {
@@ -1291,27 +1403,25 @@ export default class Supersidian extends Plugin {
 				if (d) synced[d.id] = { eventId: e.eventId, sig: signature(d) };
 			}
 			await this.save();
-			if (manual) new Notice(`Google Calendar: ${entries.length} event${entries.length === 1 ? "" : "s"} synced.`);
+			progress?.done(`Google Calendar: ${entries.length} event${entries.length === 1 ? "" : "s"} synced.`);
 		} catch (e) {
 			console.error("supersidian: calendar", e);
-			if (manual) new Notice(`Calendar sync failed: ${e instanceof Error ? e.message : e}`);
+			const text = `Calendar sync failed: ${e instanceof Error ? e.message : e}`;
+			if (progress) progress.fail(text);
+			else if (manual) new Notice(text);
 		} finally {
 			this.calendarBusy = false;
 		}
 	}
 
-	/** Shows a notice only for manual syncs; automatic syncs just update the status bar. */
-	private report(results: NotebookResult[], manual: boolean) {
-		if (!manual) return;
+	/** The result of a manual sync, for its notice. */
+	private report(results: NotebookResult[]): string {
 		const rendered = results.reduce((n, r) => n + r.rendered, 0);
 		const notes = results.flatMap((r) => r.notesUpdated);
-		if (!rendered && !notes.length) {
-			new Notice("Supernote: nothing new.");
-			return;
-		}
+		if (!rendered && !notes.length) return "Supernote: nothing new.";
 		const names = notes.map((n) => path.basename(n, ".md"));
 		const shown = names.slice(0, 3).join(", ") + (names.length > 3 ? ` +${names.length - 3}` : "");
-		new Notice(`Supernote: ${rendered} page${rendered === 1 ? "" : "s"} rendered` + (notes.length ? `, updated ${shown}` : ""));
+		return `Supernote: ${rendered} page${rendered === 1 ? "" : "s"} rendered` + (notes.length ? `, updated ${shown}` : "");
 	}
 
 	/** Config the tablet plugin reads for HTTPS sync; written over USB when it changes. */
@@ -1351,7 +1461,11 @@ export default class Supersidian extends Plugin {
 			// "syncing" keeps the idle text so the status bar does not change on every 1 s poll.
 			text = `Supernote · ${this.link} · synced ${ago(this.data.lastSync)}`;
 			if (s.kind === "syncing") title = `Syncing ${s.what}`;
-			if (this.transcribing.size) title = `Transcribing ${this.transcribing.size} page${this.transcribing.size === 1 ? "" : "s"}`;
+			const n = this.transcribing.size;
+			if (n) {
+				text += ` · transcribing ${n} page${n === 1 ? "" : "s"}`;
+				title = "Claude is transcribing pages whose ink changed; topics and concepts update after";
+			}
 		}
 		if (this.pushError) title = `${this.pushError}\n${title}`;
 		// Touch the DOM only when something changed, so polling does not redraw the status bar.
@@ -1379,6 +1493,9 @@ const TABLET_CONFIG = "/sdcard/Note/.supersidian.json";
 /** Without adb, the tablet counts as connected this long after its last HTTPS request. */
 const PUSH_FRESH_MS = 30 * 60_000;
 
+/** "Process this note now" gives up waiting for its transcripts after this long. */
+const PROCESS_TIMEOUT_MS = 10 * 60_000;
+
 /** One notebook sync may take this long (large archive notebooks render in about a minute). */
 const SYNC_TIMEOUT_MS = 180_000;
 
@@ -1399,35 +1516,21 @@ function withTimeout<T>(ms: number, what: string, promise: Promise<T>): Promise<
 	});
 }
 
-/** How an edit moved the text: where an old position ends up, and whether the edit replaced it. */
-interface EditMap {
-	map(pos: number): number;
-	replaced(pos: number): boolean;
-}
-
 /**
  * Replaces the lines of the editor's text that differ from `next`, as separate changes (see
  * lineChanges), so lines both have (page images on screen) stay in place. A single span from the
  * first difference to the last covered everything between an edit to Topics and one lower down,
- * which re-created the images in view and made the note jump. Returns how positions moved.
+ * which re-created the images in view and made the note jump. Returns false when nothing changed.
  */
-function replaceChanged(editor: Editor, next: string): EditMap | null {
-	const prev = editor.getValue();
-	const changes = lineChanges(prev, next);
-	if (!changes.length) return null;
-	const replaced = (pos: number) => changes.some((c) => pos > c.from && pos < c.to);
+function replaceChanged(editor: Editor, next: string): boolean {
+	const changes = lineChanges(editor.getValue(), next);
+	if (!changes.length) return false;
 	// Straight to CodeMirror: Editor.replaceRange also scrolls the cursor into view, which moved
 	// the note to wherever the cursor was (usually the top) on every plugin edit.
 	const cm = (editor as unknown as { cm?: EditorView }).cm;
-	if (cm) {
-		const tr = cm.state.update({ changes });
-		cm.dispatch(tr);
-		return { map: (pos) => tr.changes.mapPos(pos, 1), replaced };
-	}
-	for (const c of [...changes].reverse()) editor.replaceRange(c.insert, editor.offsetToPos(c.from), editor.offsetToPos(c.to));
-	const map = (pos: number) =>
-		changes.reduce((p, c) => (pos >= c.to ? p + c.insert.length - (c.to - c.from) : p), pos);
-	return { map, replaced };
+	if (cm) cm.dispatch(cm.state.update({ changes }));
+	else for (const c of [...changes].reverse()) editor.replaceRange(c.insert, editor.offsetToPos(c.from), editor.offsetToPos(c.to));
+	return true;
 }
 
 /** Whole days from one YYYY-MM-DD date to a later one. */

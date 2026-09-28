@@ -2,9 +2,9 @@ import { PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI } from 'sn-p
 import { getConfig, onUplinkChange, sendLive, setUplinkWait, uploadNote } from './uplink';
 
 /**
- * Saves the open notebook shortly after the pen stops, so the .note file on
- * the device (and the laptop reading it over USB) has the latest ink without
- * closing the notebook.
+ * Streams pen motions, finished strokes and erasures to the laptop, which draws them live, and
+ * saves the open notebook when you leave a page, so the laptop gets the saved file then. Closing
+ * the notebook saves it as well. Each save appends to the .note file, so there are no others.
  */
 
 
@@ -218,28 +218,22 @@ function onMotion(m: Motion) {
     waiting.forEach(r => r());
   }
   if (end || penBuffer.length >= PEN_BATCH) flushPen(strokeId, end);
-  if (end) checkErase(strokeId);
 }
 const pageSizes = new Map<string, {width: number; height: number}>();
 /** "<file>#<page>" of the last stroke, to notice page switches. */
 let lastPageKey: string | null = null;
 
 /**
- * Called with "<file>#<page>" whenever the current page is known. On a page change it saves,
- * storing the page just left (the note app saves on page turns too, but not before the plugin
- * sees the next stroke), and marks the new page so its first stroke is saved at once: a page
- * with no strokes yet is not written by a save ("mTrailNumber 0"), so until that stroke is
- * saved the laptop has no page to show.
+ * Called with "<file>#<page>" whenever the current page is known. On a page change it saves the
+ * page just left. A new page has no save until it is left in turn; the laptop shows its live ink
+ * on a placeholder page meanwhile.
  */
 function pageSeen(key: string) {
   if (key === lastPageKey) return;
   const first = lastPageKey === null;
   lastPageKey = key;
-  if (first) return;
-  newPage = true;
-  saveNow();
+  if (!first) saveLeftPage(key.slice(0, key.lastIndexOf('#')));
 }
-let newPage = false;
 let checkingPage = false;
 
 /** Reads the current page shortly after a tap, to notice page turns and new pages without a stroke. */
@@ -279,41 +273,19 @@ function fileSeen(file: string | null) {
 }
 
 /**
- * Saves a new page once its first stroke is drawn. The note app declines a save while it is
- * still processing a stroke, and a save that runs behind another reports false, so it is
- * tried up to 3 times, 1 s apart.
+ * Saves after a page change. The note app declines a save while it is still processing a
+ * stroke, and a save that runs behind another reports false, so it is tried up to 3 times, 1 s
+ * apart. The note app also saves on some page turns itself and then has nothing left to save,
+ * so the notebook is uploaded in any case.
  */
-async function saveNewPage() {
+async function saveLeftPage(file: string) {
   for (let i = 0; i < 3; i++) {
     await waitForPenIdle();
     if (await saveNow()) return;
     await waitUntil(Date.now(), 1000);
   }
+  uploadNote(file);
 }
-
-/** Ids of recent pen motions that erased (their pen-up event carried no elements). */
-const erasedStrokes = new Set<number>();
-
-/**
- * An eraser motion's pen-up event arrives about 150 ms after the lift with no elements (a lasso
- * motion's carries its loop as a stroke; the motion events and getPenInfo report the same tool
- * for all three). The laptop is told at once, so it can show the erase before the saved file
- * arrives, and the save runs 100 ms later: the note app has recorded the erase by then. The
- * second save catches an erase the note app was still processing.
- */
-async function onErase(stroke: number) {
-  erasedStrokes.add(stroke);
-  if (erasedStrokes.size > 100) erasedStrokes.delete(erasedStrokes.values().next().value!);
-  emit('erase', {stroke});
-  await waitUntil(Date.now(), 100);
-  await saveNow();
-  await waitUntil(Date.now(), 1200);
-  await waitForPenIdle();
-  await saveNow();
-}
-
-/** Ids of recent pen motions that produced a stroke (their pen-up event carried ink). */
-const inkedStrokes = new Set<number>();
 /** Whether the pen is touching the screen, and when it last lifted. */
 let penDown = false;
 let lastLift = 0;
@@ -323,25 +295,6 @@ let onLift: (() => void)[] = [];
  * waits on round trips to the note app instead (each takes a few milliseconds). */
 async function waitUntil(start: number, ms: number) {
   while (Date.now() - start < ms) await PluginCommAPI.getCurrentPageNum();
-}
-
-/**
- * A pen motion that produced no stroke was an eraser (or lasso) motion, and its effect exists
- * only on the tablet until the notebook is saved. The note app records an erase about 50 ms
- * after the pen lifts and declines a save while it is still processing a stroke
- * (logcat: "isGetTrailFinish false"), so the save runs 0.8 s after the lift and once more at
- * 2 s. A save with nothing new to store writes nothing ("isSave false"), so the second one
- * costs nothing when the first worked.
- */
-async function checkErase(stroke: number) {
-  await waitUntil(Date.now(), 800);
-  // By now the pen-up event of a stroke that drew ink has arrived.
-  if (inkedStrokes.has(stroke) || erasedStrokes.has(stroke)) return;
-  for (let i = 0; i < 2; i++) {
-    await waitForPenIdle();
-    await saveNow();
-    await waitUntil(Date.now(), 1200);
-  }
 }
 
 /** Waits until the pen has been lifted for 0.5 s: a save while a stroke is being processed is declined. */
@@ -431,15 +384,9 @@ export function startAutosave() {
       status.penUps++;
       if (lifeState !== 2) status.penUpsHidden++;
       const elements = (msg as StrokeElement[] | null) ?? [];
-      if (!elements.length) onErase(strokeId);
-      if (elements.some(e => e.type === 0)) {
-        if (newPage) {
-          newPage = false;
-          saveNewPage();
-        }
-        inkedStrokes.add(strokeId);
-        if (inkedStrokes.size > 100) inkedStrokes.delete(inkedStrokes.values().next().value!);
-      }
+      // An eraser motion's pen-up event arrives about 150 ms after the lift with no elements (a
+      // lasso motion's carries its loop as a stroke). The laptop shows the erase from this.
+      if (!elements.length) emit('erase', {stroke: strokeId});
       sendInk(elements);
     },
   });
