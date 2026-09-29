@@ -160,7 +160,7 @@ function countdown(today: string, date: string): string {
 	return `${dateLabel(date)} · in ${n} days`;
 }
 
-const EXAM = /\b(midterm|final|exam|quiz|test)\b/i;
+export const EXAM = /\b(midterm|final|exam|quiz|test)\b/i;
 
 const link = (path: string, label: string) => `[[${path.replace(/\.md$/, "")}|${label}]]`;
 

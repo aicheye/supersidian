@@ -40,6 +40,7 @@ import {
 	classStart,
 	checkedInHome,
 	Deadline,
+	EXAM,
 	FollowUp,
 	formatDeadlines,
 	homeBlock,
@@ -1409,7 +1410,8 @@ export default class Supersidian extends Plugin {
 
 	/**
 	 * Mirrors deadlines from yesterday onward to Google Calendar, CALENDAR_BATCH items per run,
-	 * skipping items whose event already matches their current signature.
+	 * skipping items whose event already matches their current signature. Tests are left out
+	 * because the imported Quest portal calendar already has them.
 	 */
 	private async calendarNow(manual: boolean) {
 		if ((!this.data.settings.calendar && !manual) || this.calendarBusy) return;
@@ -1422,7 +1424,7 @@ export default class Supersidian extends Plugin {
 			const from = isoDate(new Date(Date.now() - 86_400_000));
 			const parsed = parseDeadlines(await vault.read(DEADLINES));
 			if (parsed.dirty) return;
-			const pending = parsed.items.filter((d) => d.date >= from && synced[d.id]?.sig !== signature(d))
+			const pending = parsed.items.filter((d) => d.date >= from && !EXAM.test(d.title) && synced[d.id]?.sig !== signature(d))
 				.slice(0, CALENDAR_BATCH);
 			if (!pending.length) {
 				if (manual) new Notice("Google Calendar is up to date.");
@@ -1691,7 +1693,7 @@ class SettingsTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Google Calendar")
-			.setDesc("Mirror deadlines to your primary Google Calendar through Claude Code. Finished items get a ✅ in the event title.")
+			.setDesc("Mirror deadlines (not tests, which the Quest portal calendar has) to your primary Google Calendar through Claude Code. Finished items get a ✅ in the event title.")
 			.addToggle((t) =>
 				t.setValue(s.calendar).onChange(async (v) => {
 					s.calendar = v;
