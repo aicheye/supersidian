@@ -105,3 +105,9 @@ svg.supersidian-live path.supersidian-live-pending.supersidian-live-lasso {
 	width: 100%;
 	margin: var(--size-4-2) 0 var(--size-4-1);
 }
+
+/* The folded properties arrow in the theme's gray, like the unfolded one, not the accent color
+   (properties start folded, see foldNew() in main.ts). */
+.metadata-container {
+	--collapse-icon-color-collapsed: var(--collapse-icon-color);
+}
