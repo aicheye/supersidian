@@ -250,6 +250,14 @@ export default class Supersidian extends Plugin {
 		this.registerEvent(this.app.workspace.on("layout-change", showStatus));
 		this.register(() => this.statusEl.parentElement?.removeClass("supersidian-empty"));
 
+		// Properties start folded each time a note opens (Obsidian has no setting for this). The
+		// properties editor is not in the public API: `metadataEditor.setCollapse(collapsed, animate)`.
+		const foldProperties = () => {
+			const view = this.app.workspace.getActiveViewOfType(MarkdownView) as (MarkdownView & { metadataEditor?: { setCollapse?: (c: boolean, animate: boolean) => void } }) | null;
+			view?.metadataEditor?.setCollapse?.(true, false);
+		};
+		this.registerEvent(this.app.workspace.on("file-open", foldProperties));
+
 		this.addCommand({ id: "process-note", name: "Process this note now (sync, transcribe, topics)", callback: () => this.processNote(false) });
 		this.addCommand({ id: "sync-now", name: "Sync now", callback: () => this.sync({ manual: true }) });
 		this.addCommand({
