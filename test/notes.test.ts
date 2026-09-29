@@ -7,8 +7,11 @@ import { outlineWidth } from "../src/live";
 import { shellArg } from "../src/adb";
 import { lineChanges } from "../src/diff";
 
-const note = `# CS241E — Lecture 5 (Thu Sep 24, 2026)
-**Course:** x · 11:30 AM–12:50 PM, MC 2066
+const note = `---
+type: lecture
+time: 11:30 AM–12:50 PM
+---
+# Thu Sep 24, 2026
 
 ## Topics
 
@@ -20,34 +23,34 @@ const note = `# CS241E — Lecture 5 (Thu Sep 24, 2026)
 const page = (id: string) => ({ pageid: id, png: `2A/CS241E/assets/notes/Lectures/${id.slice(1, 9)}-${id.slice(9, 15)}.png` });
 
 test("a new block goes directly under the heading before Questions, keeping one empty line in empty sections", () => {
-	const out = applyBlock(note, [page("P20260924114821aa")], []);
+	const out = applyBlock(note, [page("P20260924114821aa")]);
 	assert.match(out, /## Notes\n<!-- supersidian:begin -->\n!\[\[2A\/CS241E\/assets\/notes\/Lectures\/20260924-114821\.png\]\]\n<!-- supersidian:end -->\n\n## Questions/);
 	assert.match(out, /## Topics\n\n## Notes/);
 });
 
 test("text written under a page image survives a rewrite", () => {
-	const first = applyBlock(note, [page("P20260924114821aa"), page("P20260924120933bb")], []);
+	const first = applyBlock(note, [page("P20260924114821aa"), page("P20260924120933bb")]);
 	const edited = first.replace("20260924-114821.png]]\n", "20260924-114821.png]]\nmy link [x](https://example.com)\n");
-	const again = applyBlock(edited, [page("P20260924114821aa"), page("P20260924120933bb")], []);
+	const again = applyBlock(edited, [page("P20260924114821aa"), page("P20260924120933bb")]);
 	assert.match(again, /20260924-114821\.png\]\]\n\nmy link \[x\]\(https:\/\/example\.com\)\n\n!\[\[.*20260924-120933\.png\]\]/);
-	assert.equal(applyBlock(again, [page("P20260924114821aa"), page("P20260924120933bb")], []), again);
+	assert.equal(applyBlock(again, [page("P20260924114821aa"), page("P20260924120933bb")]), again);
 });
 
 test("text under a deleted page moves to the end instead of being lost", () => {
-	const first = applyBlock(note, [page("P20260924114821aa"), page("P20260924120933bb")], []);
+	const first = applyBlock(note, [page("P20260924114821aa"), page("P20260924120933bb")]);
 	const edited = first.replace("20260924-120933.png]]", "20260924-120933.png]]\nkeep me");
-	const out = applyBlock(edited, [page("P20260924114821aa")], []);
+	const out = applyBlock(edited, [page("P20260924114821aa")]);
 	assert.match(out, /keep me\n<!-- supersidian:end -->/);
 });
 
 test("removing every page leaves an empty section shape", () => {
-	const first = applyBlock(note, [page("P20260924114821aa")], []);
-	assert.equal(applyBlock(first, [], []).includes(BEGIN), false);
-	assert.match(applyBlock(first, [], []), /## Notes\n\n## Questions/);
+	const first = applyBlock(note, [page("P20260924114821aa")]);
+	assert.equal(applyBlock(first, []).includes(BEGIN), false);
+	assert.match(applyBlock(first, []), /## Notes\n\n## Questions/);
 });
 
 test("transcripts escape tilde runs and split one-line display math", () => {
-	const body = blockBody([{ ...page("P20260924114821aa"), extra: { hash: "h", transcript: "  ~~~~ (spring)\n$$x = 1$$", topics: [], concepts: [] } }], null, []);
+	const body = blockBody([{ ...page("P20260924114821aa"), extra: { hash: "h", transcript: "  ~~~~ (spring)\n$$x = 1$$", topics: [], concepts: [] } }], null);
 	assert.match(body, />   ​~~~~ \(spring\)/);
 	assert.match(body, /> \$\$\n> x = 1\n> \$\$/);
 });
@@ -143,14 +146,16 @@ test("transcript code fences move to the left margin, dedented, and unclosed one
 	assert.deepEqual(normalizeTranscript(["use ```inline``` here"]), ["use ```inline``` here"]);
 });
 
-test("a concept two notes mention is a tag in both; one only one note has is text", async () => {
-	const { footerLines } = await import("../src/notes");
+test("a concept two notes mention is a tag in both; one only one note has is left out", async () => {
+	const { applyConcepts } = await import("../src/notes");
 	const concepts = new Map<string, Set<string>>([
-		["a.md", new Set(["#concept/shared", "#concept/only-a"])],
-		["b.md", new Set(["#concept/shared"])],
+		["2A/CS241E/Lectures/LEC-2025-09-24.md", new Set(["concept/shared", "concept/only-a", "concept/other"])],
+		["2A/CS241E/Lectures/LEC-2025-09-29.md", new Set(["concept/shared", "concept/other"])],
 	]);
-	assert.deepEqual(footerLines("a.md", concepts), ["Concepts: #concept/shared", "Other concepts: only a"]);
-	assert.deepEqual(footerLines("b.md", concepts), ["Concepts: #concept/shared"]);
+	const a = applyConcepts("---\ntype: lecture\ntags:\n  - coop/x\n  - concept/stale\n---\n# A\n", "2A/CS241E/Lectures/LEC-2025-09-24.md", concepts);
+	assert.equal(a, '---\ntype: lecture\ntags:\n  - coop/x\n  - concept/other\n  - concept/shared\nrelated:\n  - "[[2A/CS241E/Lectures/LEC-2025-09-29|CS241E Mon Sep 29, 2025]]"\n---\n# A\n');
+	assert.equal(applyConcepts(a, "2A/CS241E/Lectures/LEC-2025-09-24.md", concepts), a);
+	assert.equal(applyConcepts("# C\n", "c.md", concepts), "# C\n");
 });
 
 test("a course page lists its sections, lectures first, and the list is replaced in place", () => {
@@ -168,7 +173,10 @@ test("a course page lists its sections, lectures first, and the list is replaced
 test("a day with pages and no note gets one in the notebook's section folder", () => {
 	assert.equal(datedNotePath("1A/MATH115/Lectures", "2025-09-03"), "1A/MATH115/Lectures/LEC-2025-09-03.md");
 	assert.equal(datedNotePath("1A/MATH117/Psets", "2025-09-10"), "1A/MATH117/Psets/Psets-2025-09-10.md");
-	assert.match(newDatedNote("1A/MATH115/Lectures", "2025-09-03"), /^# Wed Sep 03, 2025\n\*\*Course:\*\* \[\[1A\/MATH115\/MATH115\|MATH115\]\] · \[\[1A\/MATH115\/Lectures\/Lectures\|Lectures\]\]\n\n## Topics\n\n## Notes\n$/);
+	assert.equal(
+		newDatedNote("1A/MATH115/Lectures", "2025-09-03"),
+		'---\ntype: lecture\ncourse: "[[1A/MATH115/MATH115|MATH115]]"\ndate: 2025-09-03\n---\n# Wed Sep 03, 2025\n\n## Topics\n\n## Notes\n',
+	);
 });
 
 test("a # that would start a tag is escaped, except in headings, code and math", () => {
@@ -181,17 +189,27 @@ test("a # that would start a tag is escaped, except in headings, code and math",
 	assert.deepEqual(normalizeTranscript(["$$", "x #y", "$$", "#s"]), ["$$", "x #y", "$$", "\\#s"]);
 });
 
-test("concept tags in the footer callout stay tags", () => {
-	const body = blockBody([page("P20260924114821aa")], null, ["Concepts: #concept/stack #concept/heap"]);
-	assert.match(body, /> Concepts: #concept\/stack #concept\/heap/);
+test("an old concepts callout is dropped when the block is rewritten", () => {
+	const old = `${BEGIN}\n![[${page("P20260924114821aa").png}]]\n\n> [!supersidian]- Concepts and related lectures\n> Concepts: #concept/stack\n${END}`;
+	assert.equal(blockBody([page("P20260924114821aa")], old.slice(BEGIN.length, -END.length)), `![[${page("P20260924114821aa").png}]]`);
+});
+
+test("properties are read and set without touching other keys", async () => {
+	const { readProps, setProps } = await import("../src/frontmatter");
+	const text = "---\ntitle: x\ntags: [a, \"b c\"]\nrelated:\n  - \"[[p|q]]\"\n---\nbody\n";
+	assert.deepEqual([...readProps(text).props], [["title", "x"], ["tags", ["a", "b c"]], ["related", ["[[p|q]]"]]]);
+	assert.equal(setProps(text, { tags: ["a", "b c"] }), text);
+	assert.equal(setProps(text, { related: [], room: "MC 2066" }), "---\ntitle: x\ntags: [a, \"b c\"]\nroom: MC 2066\n---\nbody\n");
+	assert.equal(setProps("body\n", { time: "1:30–2:20 PM", note: "a: b" }), '---\ntime: 1:30–2:20 PM\nnote: "a: b"\n---\nbody\n');
+	assert.equal(setProps("---\nx: 1\n---\nbody\n", { x: null }), "body\n");
 });
 
 test("class start times read AM/PM from the end time when the start has none", () => {
-	assert.equal(classStart("**Course:** x · 1:30–2:20 PM, EIT 1015"), 13 * 60 + 30);
-	assert.equal(classStart("**Course:** x · 11:30 AM–12:50 PM, MC 2066"), 11 * 60 + 30);
-	assert.equal(classStart("**Course:** x · 11:30–12:20 PM, MC 2066"), 11 * 60 + 30);
-	assert.equal(classStart("**Course:** x · 8:30–11:20 AM, E2 2356"), 8 * 60 + 30);
-	assert.equal(classStart("**Course:** [[a|b]] · [[c|Lectures]]"), null);
+	assert.equal(classStart("---\ntime: 1:30–2:20 PM\n---\n"), 13 * 60 + 30);
+	assert.equal(classStart("---\ntime: 11:30 AM–12:50 PM\n---\n"), 11 * 60 + 30);
+	assert.equal(classStart("---\ntime: 11:30–12:20 PM\n---\n"), 11 * 60 + 30);
+	assert.equal(classStart("---\ntime: 8:30–11:20 AM\n---\n"), 8 * 60 + 30);
+	assert.equal(classStart("---\ncourse: \"[[a|b]]\"\n---\n"), null);
 });
 
 test("a term page's hand-written course list is replaced by the generated one", () => {

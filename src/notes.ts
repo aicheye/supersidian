@@ -1,4 +1,5 @@
 import * as path from "path";
+import { PropValue, readProps, setProps, withTags } from "./frontmatter";
 
 /** Subset of Obsidian's DataAdapter used by the sync. Paths are vault-relative. */
 export interface VaultIO {
@@ -79,14 +80,33 @@ export function datedNotePath(folder: string, date: string): string {
 	return `${folder}/${PREFIXES[name] ?? name}-${date}.md`;
 }
 
+/** A note's `type` property from its section folder; sections not listed here are "notes". */
+const SECTION_TYPES: Record<string, string> = {
+	Lectures: "lecture",
+	Tutorials: "tutorial",
+	Labs: "lab",
+	Psets: "pset",
+	Homework: "homework",
+	Assignments: "assignment",
+};
+
+export function sectionType(folder: string): string {
+	return SECTION_TYPES[folder.split("/").pop()!] ?? "notes";
+}
+
+/** The `course` property: a link to the course page, e.g. [[2A/CS241E/CS241E|CS241E]]. */
+export function courseLink(folder: string): string {
+	const [term, course] = folder.split("/");
+	return `[[${term}/${course}/${course}|${course}]]`;
+}
+
 /**
  * A new dated note for a day that has pages but no note, in the shape of the class notes. Its
- * title is the date alone: the folders and the course line name the course and section. It has no
- * class time, so Home does not list it as a class.
+ * title is the date alone: the folders and the course property name the course and section. It
+ * has no `time` property, so Home does not list it as a class.
  */
 export function newDatedNote(folder: string, date: string): string {
-	const [term, course, name] = folder.split("/");
-	return `# ${dateLabel(date, true)}\n**Course:** [[${term}/${course}/${course}|${course}]] · [[${sectionIndex(folder).replace(/\.md$/, "")}|${name.replace(/_/g, " ")}]]\n\n## Topics\n\n## Notes\n`;
+	return setProps(`# ${dateLabel(date, true)}\n\n## Topics\n\n## Notes\n`, { type: sectionType(folder), course: courseLink(folder), date });
 }
 
 /**
@@ -187,13 +207,13 @@ export async function datedNotes(vault: VaultIO, folder: string): Promise<Map<st
 	return map;
 }
 
-/** "#concept/symbol-table" for "Symbol table"; null when nothing tag-safe is left. */
+/** "concept/symbol-table" for "Symbol table"; null when nothing tag-safe is left. */
 export function conceptTag(concept: string): string | null {
 	const slug = concept
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "");
-	return /[a-z]/.test(slug) ? `#concept/${slug}` : null;
+	return /[a-z]/.test(slug) ? `concept/${slug}` : null;
 }
 
 function trimBlank(lines: string[]): string[] {
@@ -291,8 +311,7 @@ export function normalizeTranscript(lines: string[], escape = true): string[] {
 }
 
 function callout(kind: string, title: string, body: string[]): string {
-	// Only transcripts are escaped: the footer callout's #concept/ tags must stay tags.
-	return [`> [!${kind}]- ${title}`, ...normalizeTranscript(body, kind === "transcript").map((l) => (l ? `> ${l}` : ">"))].join("\n");
+	return [`> [!${kind}]- ${title}`, ...normalizeTranscript(body).map((l) => (l ? `> ${l}` : ">"))].join("\n");
 }
 
 export interface BlockPage {
@@ -301,8 +320,11 @@ export interface BlockPage {
 	extra?: PageExtra;
 }
 
-/** Builds the block body: each page image, its transcript, then whatever the user wrote under it. */
-export function blockBody(pages: BlockPage[], previous: string | null, footer: string[]): string {
+/**
+ * Builds the block body: each page image, its transcript, then whatever the user wrote under it.
+ * The concepts callout older versions wrote at the end is dropped (concepts are properties now).
+ */
+export function blockBody(pages: BlockPage[], previous: string | null): string {
 	const user = previous === null ? new Map<string, string[]>() : userText(previous);
 	const parts: string[] = [];
 	const lead = user.get("");
@@ -319,23 +341,22 @@ export function blockBody(pages: BlockPage[], previous: string | null, footer: s
 	}
 	// Text under a page that no longer exists is kept at the end instead of being dropped.
 	for (const [k, v] of user) if (k && !shown.has(k)) parts.push(v.join("\n"));
-	if (footer.length) parts.push(callout("supersidian", "Concepts and related lectures", footer));
 	return parts.join("\n\n");
 }
 
 /** Inserts, replaces, or removes the supersidian block in a note's text. */
-export function applyBlock(text: string, pages: BlockPage[], footer: string[]): string {
+export function applyBlock(text: string, pages: BlockPage[]): string {
 	const start = text.indexOf(BEGIN);
 	const end = text.indexOf(END);
 	if (start !== -1 && end > start) {
 		const previous = text.slice(start + BEGIN.length, end);
-		const body = blockBody(pages, previous, footer);
+		const body = blockBody(pages, previous);
 		if (body.trim()) return text.slice(0, start) + `${BEGIN}\n${body}\n${END}` + text.slice(end + END.length);
 		// Removing the block leaves an empty section: one empty line before the next heading.
 		return text.slice(0, start).replace(/\n*$/, "\n") + text.slice(end + END.length).replace(/^\n*/, "\n");
 	}
 	if (!pages.length) return text;
-	const block = `${BEGIN}\n${blockBody(pages, null, footer)}\n${END}`;
+	const block = `${BEGIN}\n${blockBody(pages, null)}\n${END}`;
 	// Older templates had a "## Handwritten notes" heading with a placeholder comment; the block replaces both.
 	const heading = HEADING.exec(text);
 	if (heading) {
@@ -507,7 +528,7 @@ export async function writeSectionIndex(
 	undated: BlockPage[],
 	concepts: Map<string, Set<string>>,
 ): Promise<string | null> {
-	const [term, course, name] = folder.split("/");
+	const name = folder.split("/").pop()!;
 	const notes = [...(await datedNotes(vault, folder))].sort(([a], [b]) => a.localeCompare(b));
 	const sections: string[] = [];
 	let month = "";
@@ -529,14 +550,11 @@ export async function writeSectionIndex(
 		lines.push(`- [[${note.replace(/\.md$/, "")}|${day}]]${topics.length ? `: ${topics.join(" · ")}` : ""}`);
 	}
 	if (lines.length) sections.push(lines.join("\n"));
-	if (undated.length) sections.push(`## Undated\n${blockBody(undated, null, [])}`);
+	if (undated.length) sections.push(`## Undated\n${blockBody(undated, null)}`);
 	const index = sectionIndex(folder);
-	const footer = footerLines(index, concepts);
-	if (footer.length) sections.push(callout("supersidian", "Concepts and related notes", footer));
 	const before = (await vault.exists(index)) ? await vault.read(index) : null;
-	const label = name.replace(/_/g, " ");
-	const header = `# ${label}\n**Course:** [[${term}/${course}/${course}|${course}]]`;
-	const next = applyIndex(before, header, sections.length ? sections : ["No notes yet."]);
+	const header = setProps(`# ${name.replace(/_/g, " ")}`, { type: "index", course: courseLink(folder) });
+	const next = applyConcepts(applyIndex(before, header, sections.length ? sections : ["No notes yet."]), index, concepts);
 	if (next === before) return null;
 	await vault.write(index, next);
 	return index;
@@ -607,20 +625,22 @@ function countTags(concepts: Map<string, Set<string>>): Map<string, number> {
 	return counts;
 }
 
-export function footerLines(note: string, concepts: Map<string, Set<string>>): string[] {
+/**
+ * A note's concept tags and related notes. Only a concept another note also has is a tag, so
+ * each tag links at least two notes; a concept one note has stays in transcripts.json and becomes
+ * a tag in both notes once a second note has it.
+ */
+export function conceptProps(note: string, concepts: Map<string, Set<string>>): { tags: string[]; related: string[] } {
 	const counts = countTags(concepts);
-	const all = [...(concepts.get(note) ?? [])].sort();
-	// Every concept another note also has is a tag, in each of those notes, so each tag node in
-	// the graph links at least two notes.
-	const shared = all.filter((t) => (counts.get(t) ?? 0) >= 2);
-	const text = (t: string) => t.replace(/^#concept\//, "").replace(/-/g, " ");
-	const own = all.filter((t) => !shared.includes(t)).map(text);
-	const related = relatedNotes(note, concepts);
-	const footer: string[] = [];
-	if (shared.length) footer.push(`Concepts: ${shared.join(" ")}`);
-	if (own.length) footer.push(`Other concepts: ${own.join(", ")}`);
-	if (related.length) footer.push(`Related: ${related.join(" · ")}`);
-	return footer;
+	const tags = [...(concepts.get(note) ?? [])].filter((t) => (counts.get(t) ?? 0) >= 2).sort();
+	return { tags, related: relatedNotes(note, concepts) };
+}
+
+/** Sets a note's concept tags (keeping its other tags) and its `related` property. */
+export function applyConcepts(text: string, note: string, concepts: Map<string, Set<string>>): string {
+	const { tags, related } = conceptProps(note, concepts);
+	const updates: Record<string, PropValue> = { tags: withTags(readProps(text).props, "concept/", tags), related };
+	return setProps(text, updates);
 }
 
 export async function writeNotebookNotes(
@@ -667,10 +687,9 @@ export async function writeNotebookNotes(
 	for (const note of touched) {
 		if (!(await vault.exists(note))) continue;
 		const pages = byDate.get(noteToDate.get(note) ?? "") ?? [];
-		const footer = footerLines(note, concepts);
 		const topics = lectureTopics(pages);
 		const text = await vault.read(note);
-		const next = applyTopics(applyBlock(text, pages, footer), topics);
+		const next = applyConcepts(applyTopics(applyBlock(text, pages), topics), note, concepts);
 		if (next !== text) {
 			await vault.write(note, next);
 			notesUpdated.push(note);

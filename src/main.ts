@@ -1,6 +1,7 @@
 import { App, Editor, FileSystemAdapter, MarkdownView, Notice, Plugin, PluginSettingTab, Setting, TAbstractFile, TFile } from "obsidian";
 import { EditorView } from "@codemirror/view";
 import { lineChanges } from "./diff";
+import { readProps } from "./frontmatter";
 import * as path from "path";
 import { adbDevice, adbShell, clockSkewMs, measureClockSkew, shellArg } from "./adb";
 import { lastContact, notePulled, PUSH_PORT, pushedNotebooks, startPushServer } from "./push";
@@ -1256,8 +1257,9 @@ export default class Supersidian extends Plugin {
 					// Only scheduled classes: notes the plugin created for a day's pages have no time.
 					const minutes = classStart(text);
 					if (minutes === null) continue;
-					// "· 11:30 AM–12:50 PM, MC 2066 ·" on the note's course line
-					const when = /· (\d{1,2}:\d{2} ?[AP]M[^·\n]*?)(?: ·|\n|$)/.exec(text)?.[1]?.trim();
+					// "11:30 AM–12:50 PM, MC 2066" from the note's time and room properties
+					const props = readProps(text).props;
+					const when = [props.get("time"), props.get("room")].filter((v) => typeof v === "string" && v).join(", ") || undefined;
 					found.push({ path: f.replace(/^\/+/, ""), label: `${courseName}${kind}`, when, minutes });
 				}
 			}

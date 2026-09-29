@@ -1,3 +1,4 @@
+import { readProps } from "./frontmatter";
 import { BEGIN, dateLabel, END } from "./notes";
 
 /**
@@ -80,12 +81,14 @@ export function formatDeadlines(file: DeadlinesFile): string {
 
 /** Local date as YYYY-MM-DD. */
 /**
- * Minutes after midnight a class starts, from its note's course line ("· 1:30–2:20 PM, EIT 1015"
- * or "· 11:30 AM–12:50 PM"); null for a note with no class time. A start with no AM/PM takes the
+ * Minutes after midnight a class starts, from its note's `time` property ("1:30–2:20 PM" or
+ * "11:30 AM–12:50 PM"); null for a note with no class time. A start with no AM/PM takes the
  * end's, unless the start hour is later than the end hour (11:30–12:20 PM starts in the morning).
  */
 export function classStart(text: string): number | null {
-	const m = /· (\d{1,2}):(\d{2}) ?([AP]M)?(?:\s*[–-]\s*(\d{1,2}):\d{2} ?([AP]M))?/.exec(text);
+	const time = readProps(text).props.get("time");
+	if (typeof time !== "string") return null;
+	const m = /^(\d{1,2}):(\d{2}) ?([AP]M)?(?:\s*[–-]\s*(\d{1,2}):\d{2} ?([AP]M))?/.exec(time.trim());
 	if (!m) return null;
 	const hour = Number(m[1]) % 12;
 	let pm = m[3] ? m[3] === "PM" : m[5] === "PM";
@@ -112,7 +115,7 @@ export interface Lecture {
 	path: string;
 	/** e.g. "CS241E Lecture 6" */
 	label: string;
-	/** e.g. "11:30 AM–12:50 PM, MC 2066", from the note's course line */
+	/** e.g. "11:30 AM–12:50 PM, MC 2066", from the note's time and room properties */
 	when?: string;
 }
 
