@@ -250,13 +250,42 @@ export default class Supersidian extends Plugin {
 		this.registerEvent(this.app.workspace.on("layout-change", showStatus));
 		this.register(() => this.statusEl.parentElement?.removeClass("supersidian-empty"));
 
-		// Properties start folded each time a note opens (Obsidian has no setting for this). The
-		// properties editor is not in the public API: `metadataEditor.setCollapse(collapsed, animate)`.
-		const foldProperties = () => {
-			const view = this.app.workspace.getActiveViewOfType(MarkdownView) as (MarkdownView & { metadataEditor?: { setCollapse?: (c: boolean, animate: boolean) => void } }) | null;
-			view?.metadataEditor?.setCollapse?.(true, false);
+		// Properties start folded whenever a pane shows a different note (Obsidian has no setting for
+		// this). Workspace events fire before a new tab shows its note and before Obsidian restores
+		// the note's saved fold, so the fold hooks the properties editor instead: after it loads a
+		// note's properties (`synchronize`), a note it has not shown before is folded. Unfolding lasts
+		// until the pane shows another note. The properties editor is not in the public API.
+		type PropertiesEditor = { owner?: { file?: TFile | null }; setCollapse(collapsed: boolean, animate: boolean): void; synchronize(data: unknown): unknown };
+		const shownFile = new WeakMap<object, string>();
+		const foldNew = (editor: PropertiesEditor) => {
+			const file = editor.owner?.file?.path;
+			if (!file || shownFile.get(editor) === file) return;
+			shownFile.set(editor, file);
+			editor.setCollapse(true, false);
 		};
-		this.registerEvent(this.app.workspace.on("file-open", foldProperties));
+		const patchProperties = () => {
+			let patched = false;
+			this.app.workspace.iterateAllLeaves((leaf) => {
+				const editor = (leaf.view as { metadataEditor?: PropertiesEditor }).metadataEditor;
+				if (patched || !editor?.synchronize) return;
+				patched = true;
+				const proto = Object.getPrototypeOf(editor) as PropertiesEditor;
+				const original = proto.synchronize;
+				proto.synchronize = function (this: PropertiesEditor, data: unknown) {
+					const out = original.call(this, data);
+					foldNew(this);
+					return out;
+				};
+				this.register(() => (proto.synchronize = original));
+				foldNew(editor);
+			});
+			return patched;
+		};
+		// The editor's class is reachable only through an open note, so patch once one is open.
+		if (!patchProperties()) {
+			const ref = this.app.workspace.on("layout-change", () => patchProperties() && this.app.workspace.offref(ref));
+			this.registerEvent(ref);
+		}
 
 		this.addCommand({ id: "process-note", name: "Process this note now (sync, transcribe, topics)", callback: () => this.processNote(false) });
 		this.addCommand({ id: "sync-now", name: "Sync now", callback: () => this.sync({ manual: true }) });
