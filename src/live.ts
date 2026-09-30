@@ -258,6 +258,23 @@ export function insidePolygon(q: Point, polygon: Point[]): boolean {
 }
 
 /**
+ * Whether `q` lies within `sqrt(r2)` of the polyline through `line`. Pen samples of a fast motion
+ * are far apart (56 px measured), so checking only the samples misses a dot the line crosses.
+ */
+export function nearPolyline(q: Point, line: Point[], r2: number): boolean {
+	for (let i = 0; i < line.length; i++) {
+		const a = line[i];
+		const b = line[i + 1] ?? a;
+		const dx = b.x - a.x;
+		const dy = b.y - a.y;
+		const len2 = dx * dx + dy * dy;
+		const t = len2 ? Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.y - a.y) * dy) / len2)) : 0;
+		if ((a.x + t * dx - q.x) ** 2 + (a.y + t * dy - q.y) ** 2 <= r2) return true;
+	}
+	return false;
+}
+
+/**
  * A smooth path through pen samples: quadratic curves with each sample as the control point
  * and the midpoints between samples as the ends, so the line has no corners at the samples.
  */
@@ -441,7 +458,7 @@ export class InkLayer {
 			const pts = this.inkPoints.get(el);
 			const hit = loop
 				? pts?.some((a) => insidePolygon(a, points))
-				: pts?.some((a) => points.some((b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2 <= r2));
+				: pts?.some((a) => nearPolyline(a, points, r2));
 			if (!hit) continue;
 			el.style.display = "none";
 			if (p) p.hidden.push(el);

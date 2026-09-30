@@ -31,7 +31,7 @@ import {
 } from "./notes";
 import { findClaude, transcribePages } from "./transcribe";
 import { hideMarkers } from "./hide";
-import { deliverLive, InkLayer, insidePolygon, LASSO_PEN, LiveHandlers, LiveInk, LivePen, PenInfo, Point, PX_PER_PEN_UNIT, startLogStream } from "./live";
+import { deliverLive, InkLayer, insidePolygon, LASSO_PEN, LiveHandlers, LiveInk, LivePen, nearPolyline, PenInfo, Point, PX_PER_PEN_UNIT, startLogStream } from "./live";
 import { randomBytes } from "crypto";
 import { Progress } from "./progress";
 import { checkInbox } from "./inbox";
@@ -770,7 +770,8 @@ export default class Supersidian extends Plugin {
 		if (this.motionPages.size > 50) this.motionPages.delete(this.motionPages.keys().next().value!);
 		const line = this.layer.pendingLine(pen.stroke);
 		if (line?.eraser) {
-			if (points.length) this.eraseAlong(pen.stroke, points);
+			// With the sample before this message's, so the segment between messages is checked too.
+			if (points.length) this.eraseAlong(pen.stroke, line.points.slice(-points.length - 1));
 			// Drawn as an eraser: the loop is complete, so erase inside it now rather than at the
 			// erase message. A lasso motion ends up as ink and undoes this (InkLayer.dropPending).
 			if (pen.end) this.eraseAlong(pen.stroke, line.points, true);
@@ -863,7 +864,7 @@ export default class Supersidian extends Plugin {
 			const reach2 = (reach + (st.w * PX_PER_PEN_UNIT) / 2) ** 2;
 			for (let j = 0; j < st.p.length; j += 2) {
 				const q = { x: st.p[j], y: st.p[j + 1] };
-				if (loop ? !insidePolygon(q, page) : !page.some((e) => (e.x - q.x) ** 2 + (e.y - q.y) ** 2 <= reach2)) continue;
+				if (loop ? !insidePolygon(q, page) : !nearPolyline(q, page, reach2)) continue;
 				done.add(i);
 				// Pressure pens draw up to about 1.5 times the set width; 5 px more covers antialiasing.
 				this.layer.coverStroke(id, m.png, st.p.map((v) => v * m.k), (st.w * PX_PER_PEN_UNIT * 1.6 + 5) * m.k);
