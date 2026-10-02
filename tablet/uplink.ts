@@ -69,6 +69,7 @@ async function request(method: string, path: string, body?: string | Blob, signa
     const res = await fetch(`${live ? c.liveUrl ?? c.url : c.url}${path}`, {method, body, headers: {Authorization: `Bearer ${c.token}`}, signal});
     // The laptop has a new token (it gives it to the tablet again next time the cable is in).
     if (res.status === 401) config = null;
+    if (res.ok) answeredAt = Date.now();
     uplinkStatus.lastError = res.ok || res.status === 409 ? null : `${method} ${path.split('?')[0]}: HTTP ${res.status}`;
     return res;
   } catch (e) {
@@ -91,6 +92,21 @@ async function noteUsb(res: Response | null): Promise<unknown> {
 
 function skip(): boolean {
   return (uplinkStatus.usb && Date.now() - usbAt < USB_RECHECK_MS) || Date.now() - failedAt < RETRY_MS;
+}
+
+/** When a request last got an answer; see ping. */
+let answeredAt = 0;
+const PING_MS = 60_000;
+
+/**
+ * Tells the laptop the tablet is reachable, at most every PING_MS. Called on every touch, also
+ * outside notebooks, because the laptop reports the tablet as not connected after 30 minutes
+ * without a request.
+ */
+export async function ping() {
+  if (skip() || Date.now() - answeredAt < PING_MS) return;
+  answeredAt = Date.now();
+  await noteUsb(await request('GET', '/ping'));
 }
 
 let queue: {id: string; kind: string; payload: object; t: number}[] = [];
@@ -190,6 +206,12 @@ export async function uploadNote(file: string, savedAt?: number) {
   if (savedAt !== undefined) savedTimes.set(file, savedAt);
   const rel = file.split('/Note/')[1];
   if (!rel || !file.toLowerCase().endsWith('.note')) return;
+  // The laptop files notebooks by term and course and answers 400 for any other path.
+  if (!/^[^/]+\/[^/]+\/[^/]+\.note$/i.test(rel)) {
+    uplinkStatus.lastError = `not sent: ${rel} is not in Note/<term>/<course>/`;
+    onChange();
+    return;
+  }
   waiting.add(file);
   checkUploadStuck();
   if (uploading) return;

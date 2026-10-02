@@ -1,5 +1,5 @@
-import { PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI } from 'sn-plugin-lib';
-import { getConfig, onUplinkChange, sendLive, setUplinkWait, uploadNote } from './uplink';
+import { FileUtils, PluginCommAPI, PluginFileAPI, PluginManager, PluginNoteAPI } from 'sn-plugin-lib';
+import { getConfig, onUplinkChange, ping, sendLive, setUplinkWait, uploadNote } from './uplink';
 
 /**
  * Streams pen motions, finished strokes and erasures to the laptop, which draws them live, and
@@ -196,6 +196,7 @@ interface Motion {
 
 /** Streams pen positions while a stroke is drawn, so the laptop can draw it before pen-up. */
 function onMotion(m: Motion) {
+  ping();
   const lifted = m.action === 1 || m.action === 3;
   if (m.toolType !== 2) {
     // Any finger event may be part of a swipe that turns the page; the check runs after the last one.
@@ -266,10 +267,12 @@ async function checkPage() {
   try {
     await waitUntil(Date.now(), 400);
     const path = (await PluginCommAPI.getCurrentFilePath()) as Response<string>;
-    const page = (await PluginCommAPI.getCurrentPageNum()) as Response<number>;
     const file = path?.success ? path.result : null;
     fileSeen(file ?? null);
-    if (!file || !file.toLowerCase().endsWith('.note') || !page?.success || page.result === undefined) return;
+    if (!file || !file.toLowerCase().endsWith('.note')) return;
+    // Asked only with a notebook open: getCurrentPageNum never answers in the file browser.
+    const page = (await PluginCommAPI.getCurrentPageNum()) as Response<number>;
+    if (!page?.success || page.result === undefined) return;
     pageSeen(`${file}#${page.result}`);
     const count = (await PluginFileAPI.getNoteTotalPageNum(file)) as Response<number>;
     if (count?.success && typeof count.result === 'number') {
@@ -330,18 +333,23 @@ let penDown = false;
 let lastLift = 0;
 /** Resolved at the next pen lift. */
 let onLift: (() => void)[] = [];
-/** Waits until `ms` after `start`. JS timers pause while the plugin screen is closed, so this
- * waits on round trips to the note app instead (each takes a few milliseconds). */
+/**
+ * Waits until `ms` after `start`. JS timers pause while the plugin screen is closed, so this
+ * waits on round trips to native code instead. It checks whether a file exists rather than
+ * asking the note app, because getCurrentPageNum never answers in the file browser, which held
+ * back the upload of a notebook closed there and every upload after it.
+ */
 async function waitUntil(start: number, ms: number) {
-  while (Date.now() - start < ms) await PluginCommAPI.getCurrentPageNum();
+  while (Date.now() - start < ms) await FileUtils.exists(CONFIG_FILE);
 }
+const CONFIG_FILE = '/sdcard/Note/.supersidian.json';
 
 /** Waits until the pen has been lifted for 0.5 s: a save while a stroke is being processed is declined. */
 async function waitForPenIdle() {
   for (;;) {
     // No polling while a stroke is drawn, so the wait adds no work for the note app then.
     if (penDown) await new Promise<void>(r => onLift.push(r));
-    else if (Date.now() - lastLift < 500) await PluginCommAPI.getCurrentPageNum();
+    else if (Date.now() - lastLift < 500) await FileUtils.exists(CONFIG_FILE);
     else return;
   }
 }

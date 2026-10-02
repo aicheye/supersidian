@@ -9,6 +9,7 @@ import { DeviceNotebook, cachePath } from "./core";
  * passes them to this server on 127.0.0.1, so nothing listens on the tablet and nothing here
  * listens beyond localhost. Requests carry a token the laptop gives the tablet over USB.
  *
+ * - GET /ping: whether USB is in. The tablet sends it on touches, so the laptop knows it is reachable.
  * - GET /have?rel=<rel>: bytes of the notebook already held here, and whether USB is in (the
  *   tablet then sends nothing, since adb covers both notebooks and live ink).
  * - POST /note?rel=<rel>&from=<n>&size=<total>&savedAt=<ms>: the notebook's bytes from `from`.
@@ -45,6 +46,11 @@ export interface PushHandlers {
 /** Notebooks received since Obsidian started, and when the tablet last made any request. */
 export const pushed = new Map<string, PushedNotebook>();
 export let lastContact = 0;
+
+/** Restores lastContact saved before Obsidian reloaded, so a reload does not report the tablet as gone. */
+export function restoreLastContact(t: number) {
+	lastContact = Math.max(lastContact, t);
+}
 
 /** A notebook path relative to the tablet's Note folder: <term>/<course>/<name>.note. */
 function validRel(rel: string | null): rel is string {
@@ -105,8 +111,9 @@ export function startPushServer(h: PushHandlers): () => void {
 			lastContact = Date.now();
 			const usb = await h.usb();
 			const rel = url.searchParams.get("rel");
+			if (req.method === "GET" && url.pathname === "/ping") return reply(res, 200, { usb });
 			if (req.method === "GET" && url.pathname === "/have") {
-				if (!validRel(rel)) return reply(res, 400, { error: "rel" });
+				if (!validRel(rel)) return reply(res, 400, { error: `not <term>/<course>/<name>.note: ${rel}` });
 				const st = await fs.stat(cachePath(rel)).catch(() => null);
 				return reply(res, 200, { size: st?.size ?? 0, usb });
 			}
@@ -119,7 +126,7 @@ export function startPushServer(h: PushHandlers): () => void {
 				return reply(res, 200, { usb });
 			}
 			if (req.method === "POST" && url.pathname === "/note") {
-				if (!validRel(rel)) return reply(res, 400, { error: "rel" });
+				if (!validRel(rel)) return reply(res, 400, { error: `not <term>/<course>/<name>.note: ${rel}` });
 				const from = Number(url.searchParams.get("from"));
 				const size = Number(url.searchParams.get("size"));
 				const savedAt = Number(url.searchParams.get("savedAt"));

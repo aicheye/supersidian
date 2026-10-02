@@ -4,7 +4,7 @@ import { lineChanges } from "./diff";
 import { readProps } from "./frontmatter";
 import * as path from "path";
 import { adbDevice, adbShell, clockSkewMs, measureClockSkew, shellArg } from "./adb";
-import { lastContact, notePulled, PUSH_PORT, pushedNotebooks, startPushServer } from "./push";
+import { lastContact, notePulled, PUSH_PORT, pushedNotebooks, restoreLastContact, startPushServer } from "./push";
 import {
 	changed,
 	courseFolder,
@@ -122,6 +122,8 @@ interface Data {
 	penScale?: Record<string, number>;
 	/** secret the tablet sends with each HTTPS request; given to it over USB */
 	pushToken?: string;
+	/** when the tablet last made an HTTPS request, kept across reloads (push.ts lastContact) */
+	lastContact?: number;
 }
 
 type Status = { kind: "idle" } | { kind: "absent" } | { kind: "syncing"; what: string } | { kind: "error"; message: string };
@@ -154,6 +156,7 @@ export default class Supersidian extends Plugin {
 			settings: { ...DEFAULT_SETTINGS, ...saved.settings },
 			state: saved.state ?? { notebooks: {} },
 			lastSync: saved.lastSync ?? null,
+			lastContact: saved.lastContact,
 			lastInbox: saved.lastInbox,
 			calendar: saved.calendar ?? {},
 			penScale: saved.penScale ?? {},
@@ -165,6 +168,7 @@ export default class Supersidian extends Plugin {
 		// Version 2 lowered the poll interval from 10 s to 1 s.
 		if ((saved.settingsVersion ?? 1) < 2) this.data.settings.pollSeconds = DEFAULT_SETTINGS.pollSeconds;
 		this.data.settingsVersion = SETTINGS_VERSION;
+		restoreLastContact(this.data.lastContact ?? 0);
 
 		this.registerEditorExtension(hideMarkers);
 		this.layer = new InkLayer();
@@ -897,6 +901,11 @@ export default class Supersidian extends Plugin {
 			else if (lastContact && Date.now() - lastContact < PUSH_FRESH_MS) {
 				notebooks = pushedNotebooks();
 				this.link = "Tailscale";
+				// Saved at most once a minute: data.json is several hundred KB.
+				if (lastContact - (this.data.lastContact ?? 0) > 60_000) {
+					this.data.lastContact = lastContact;
+					await this.save();
+				}
 			} else {
 				const root = await findDeviceNoteRoot();
 				if (!root) {
