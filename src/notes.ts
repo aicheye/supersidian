@@ -556,6 +556,8 @@ export async function writeSectionIndex(
 	const header = setProps(`# ${name.replace(/_/g, " ")}`, { type: "index", course: courseLink(folder) });
 	const next = applyConcepts(applyIndex(before, header, sections.length ? sections : ["No notes yet."]), index, concepts);
 	if (next === before) return null;
+	// A notebook whose pages are all blank or undated has no dated notes, so nothing made the folder yet.
+	if (!(await vault.exists(folder))) await vault.mkdir(folder);
 	await vault.write(index, next);
 	return index;
 }
