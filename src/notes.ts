@@ -36,6 +36,10 @@ export interface NotebookState {
 	inked?: Record<string, boolean>;
 	/** RENDER_LAYOUT the page images were rendered with */
 	renderLayout?: number;
+	/** dated note -> pdfKey of the pages its PDF was exported from */
+	pdfs?: Record<string, string>;
+	/** some notes' PDFs were left for the next sync */
+	pdfsPending?: boolean;
 }
 
 /** Bump when the rendered image geometry changes; pages re-render once without changing their hash. */
@@ -170,6 +174,16 @@ export function pagePngs(assetDir: string, pageids: string[]): Map<string, strin
 			return [id, `${assetDir}/${name}.png`];
 		}),
 	);
+}
+
+/** The PDF of a dated note's handwritten pages: 2A/CS241E/Lectures/LEC-2026-09-30.md -> <assetDir>/LEC-2026-09-30.pdf. */
+export function notePdf(assetDir: string, note: string): string {
+	return `${assetDir}/${path.basename(note, ".md")}.pdf`;
+}
+
+/** Identifies the pages a PDF was exported from: their ids and hashes, in order. */
+export function pdfKey(pageids: string[], hashes: Record<string, string>): string {
+	return pageids.map((id) => `${id}:${hashes[id] ?? ""}`).join(",");
 }
 
 /** Key that ties user text in a block to a page: the image file name without extension. */
@@ -515,6 +529,8 @@ export interface NotesResult {
 	holding: string[];
 	unmatchedDates: string[];
 	indexUpdated: string | null;
+	/** dated note -> its saved, inked pages in order, for its PDF */
+	pdfPages: Record<string, string[]>;
 }
 
 /**
@@ -686,12 +702,17 @@ export async function writeNotebookNotes(
 	const noteToDate = new Map([...notes].map(([d, p]) => [p, d]));
 	const notesUpdated: string[] = [];
 	const holding: string[] = [];
+	const pdfPages: Record<string, string[]> = {};
 	for (const note of touched) {
 		if (!(await vault.exists(note))) continue;
 		const pages = byDate.get(noteToDate.get(note) ?? "") ?? [];
 		const topics = lectureTopics(pages);
+		// Pages being written live (blank in the last save, hash "" until saved) have nothing to export yet.
+		const saved = pages.filter((p) => nb.pages[p.pageid] && !nb.blank?.[p.pageid]).map((p) => p.pageid);
+		if (saved.length) pdfPages[note] = saved;
+		const pdf = saved.length ? `[[${notePdf(assetDir, note)}|Handwritten notes]]` : null;
 		const text = await vault.read(note);
-		const next = applyConcepts(applyTopics(applyBlock(text, pages), topics), note, concepts);
+		const next = setProps(applyConcepts(applyTopics(applyBlock(text, pages), topics), note, concepts), { pdf });
 		if (next !== text) {
 			await vault.write(note, next);
 			notesUpdated.push(note);
@@ -701,5 +722,5 @@ export async function writeNotebookNotes(
 
 	const indexUpdated = await writeSectionIndex(vault, layout.datedFolder, loose.get("") ?? [], concepts);
 
-	return { notesUpdated: notesUpdated.sort(), holding: holding.sort(), unmatchedDates: [...unmatched].sort(), indexUpdated };
+	return { notesUpdated: notesUpdated.sort(), holding: holding.sort(), unmatchedDates: [...unmatched].sort(), indexUpdated, pdfPages };
 }

@@ -8,11 +8,13 @@ import { adbList, adbPull, adbPullFrom, adbStat, clockSkewMs } from "./adb";
 import {
 	RENDER_LAYOUT,
 	layoutOf,
+	notePdf,
 	Extras,
 	NotebookState,
 	noteConcepts,
 	pageDate,
 	pagePngs,
+	pdfKey,
 	VaultIO,
 	writeNotebookNotes,
 } from "./notes";
@@ -211,6 +213,24 @@ function runRenderer(python: string, script: string, note: string, outDir: strin
 		proc.stdin.end(JSON.stringify(known));
 	});
 }
+
+/** Writes pages of a local notebook copy to PDFs with render.py --pdf: `jobs` maps each output file to its page ids. */
+function exportPdfs(python: string, script: string, note: string, jobs: Record<string, string[]>): Promise<void> {
+	return new Promise((resolve, reject) => {
+		const proc = spawn(python, [script, "--pdf", note]);
+		let stderr = "";
+		proc.stderr.on("data", (d) => (stderr += d));
+		proc.on("error", reject);
+		proc.on("close", (code) => {
+			if (code !== 0) return reject(new Error(`render.py --pdf exited ${code}: ${stderr.trim().split("\n").pop()}`));
+			resolve();
+		});
+		proc.stdin.end(JSON.stringify(jobs));
+	});
+}
+
+/** Most pages exported to PDFs in one sync (about 1.5 s each), so a first export stays inside the sync timeout. */
+const PDF_PAGES_PER_SYNC = 40;
 
 /** Images this plugin wrote: <YYYYMMDD-HHMMSS>.png, and <YYYYMMDD-HHMMSS>-<hash8>.png from commit 87bc5de. */
 const MANAGED_PNG = /\/\d{8}-\d{6}(-\d{6}|-[0-9a-f]{8})?\.png$/;
@@ -430,9 +450,39 @@ export async function syncNotebook(
 		const out = await writeNotebookNotes(vault, state, opts.extras ?? {}, opts.concepts ?? new Map());
 		state.notes = out.holding;
 
+		// Each dated note's pages as one PDF, exported again when its pages or their ink change.
+		// Past PDF_PAGES_PER_SYNC pages the rest wait for the next sync (pdfsPending).
+		state.pdfs = {};
+		let budget = PDF_PAGES_PER_SYNC;
+		const jobs: Record<string, string[]> = {};
+		const targets = new Map<string, string>();
+		for (const [note, ids] of Object.entries(out.pdfPages)) {
+			const target = notePdf(assetDir, note);
+			const key = pdfKey(ids, state.pages);
+			wanted.add(target);
+			if (!opts.force && prev?.pdfs?.[note] === key && existing.has(target)) {
+				state.pdfs[note] = key;
+				continue;
+			}
+			if (budget <= 0) {
+				state.pdfsPending = true;
+				continue;
+			}
+			budget -= ids.length;
+			state.pdfs[note] = key;
+			const file = path.join(staging, `pdf-${targets.size}.pdf`);
+			jobs[file] = ids;
+			targets.set(file, target);
+		}
+		if (targets.size) await exportPdfs(opts.python, opts.renderScript, local, jobs);
+		for (const [file, target] of targets) {
+			const buf = await fs.readFile(file);
+			await vault.writeBinary(target, buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), savedAt);
+		}
+
 		// Remove images of edited or deleted pages only after the notes stop embedding them.
 		for (const f of existing) {
-			if (MANAGED_PNG.test(f) && !wanted.has(f)) await vault.remove(f);
+			if ((MANAGED_PNG.test(f) || f.endsWith(".pdf")) && !wanted.has(f)) await vault.remove(f);
 		}
 
 		return {

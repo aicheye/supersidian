@@ -428,7 +428,7 @@ export default class Supersidian extends Plugin {
 				const f = file(p);
 				if (f) {
 					await vault.modifyBinary(f, d);
-					this.refreshImages(f, savedAt ?? Date.now());
+					if (f.extension === "png") this.refreshImages(f, savedAt ?? Date.now());
 				} else await vault.createBinary(p, d);
 			},
 			mkdir: (p) => a.mkdir(p),
@@ -920,8 +920,8 @@ export default class Supersidian extends Plugin {
 			const vault = this.io();
 			const todo = notebooks.filter((nb) => {
 				const prev = this.data.state.notebooks[nb.rel];
-				// Notebooks synced before blank pages and geometry were recorded sync once more to record them.
-				const unmeasured = !!prev && (prev.renderLayout !== RENDER_LAYOUT || Object.keys(prev.pages).some((id) => !prev.geometry?.[id]));
+				// Notebooks synced before blank pages, geometry and PDFs were recorded sync once more to record them.
+				const unmeasured = !!prev && (prev.renderLayout !== RENDER_LAYOUT || !prev.pdfs || prev.pdfsPending || Object.keys(prev.pages).some((id) => !prev.geometry?.[id]));
 				return force || unmeasured || changed(nb, prev);
 			});
 			for (const [i, nb] of todo.entries()) {

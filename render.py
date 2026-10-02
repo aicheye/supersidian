@@ -3,6 +3,7 @@
 
 Usage: render.py NOTE_PATH OUT_DIR < known.json
        render.py --strokes NOTE_PATH PAGEID
+       render.py --pdf NOTE_PATH < pdfs.json
 
 stdin is a JSON object mapping pageid -> hash from the previous sync (may be
 empty). Pages whose hash differs from the known one are rendered to
@@ -15,6 +16,9 @@ blank, top (first pixel row kept by the crop) and width are set for rendered pag
 Rendered pages also get "strokes" (see page_strokes), which the Obsidian plugin uses to show
 a whole-stroke erase before the re-rendered image arrives. --strokes prints {"strokes": [...]}
 for one page.
+
+--pdf reads {"OUT_PDF": [pageid, ...], ...} on stdin and writes each list of pages, in order, to
+its PDF as the tablet shows them: ink over the page template, uncropped, at the tablet's 300 ppi.
 
 The hash covers the raw layer bitmaps and the page template, so it changes
 only when ink or background changes. Pages are rendered as ink only
@@ -160,9 +164,36 @@ def strokes_main():
     json.dump({"strokes": []}, sys.stdout)
 
 
+# Supernote screens are 300 ppi; PDF units are 1/72 inch.
+PPI = 300
+
+
+def pdf_main():
+    from reportlab.lib.utils import ImageReader
+    from reportlab.pdfgen import canvas
+
+    jobs = json.loads(sys.stdin.read() or "{}")
+    notebook = sn.load_notebook(sys.argv[2])
+    converter = ImageConverter(notebook)
+    index = {(notebook.get_page(i).get_pageid() or f"index-{i}"): i for i in range(notebook.get_total_pages())}
+    for out_pdf, wanted in jobs.items():
+        c = canvas.Canvas(out_pdf)
+        for pageid in wanted:
+            if pageid not in index:
+                continue
+            img = converter.convert(index[pageid]).convert("L")
+            w, h = img.width * 72 / PPI, img.height * 72 / PPI
+            c.setPageSize((w, h))
+            c.drawImage(ImageReader(img), 0, 0, w, h)
+            c.showPage()
+        c.save()
+
+
 def main():
     if sys.argv[1] == "--strokes":
         return strokes_main()
+    if sys.argv[1] == "--pdf":
+        return pdf_main()
     note_path, out_dir = sys.argv[1], sys.argv[2]
     known = json.loads(sys.stdin.read() or "{}")
     os.makedirs(out_dir, exist_ok=True)

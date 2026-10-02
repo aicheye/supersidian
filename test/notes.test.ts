@@ -235,3 +235,24 @@ test("an edit at the top and one lower down stay two changes, leaving the lines 
 	assert.ok(changes.every((c) => !prev.slice(c.from, c.to).includes("p1.png")));
 	for (const [p, n] of [["", "x"], ["x", ""], ["a\nb", "a\nb\n"], ["a\nb\nc", "c\nb\na"], ["same", "same"]]) assert.equal(apply(p, lineChanges(p, n)), n);
 });
+
+test("a dated note links the PDF of its saved, inked pages; blank and unsaved pages are left out", async () => {
+	const { writeNotebookNotes, notePdf } = await import("../src/notes");
+	const files = new Map<string, string>([["2A/CS241E/Lectures/LEC-2026-09-24.md", note]]);
+	const vault = {
+		exists: async (p: string) => files.has(p) || [...files.keys()].some((f) => f.startsWith(`${p}/`)),
+		read: async (p: string) => files.get(p)!,
+		write: async (p: string, d: string) => void files.set(p, d),
+		writeBinary: async () => {},
+		mkdir: async () => {},
+		remove: async () => {},
+		list: async (p: string) => ({ files: [...files.keys()].filter((f) => f.startsWith(`${p}/`)), folders: [] }),
+	};
+	const [a, b, c] = ["P20260924114800aaaaaa", "P20260924120000bbbbbb", "P20260924121500cccccc"];
+	const nb = { course: "2A/CS241E", name: "Lectures", mtimeMs: 0, size: 0, pages: { [a]: "h1", [b]: "h2", [c]: "" }, changedAt: {}, notes: [], blank: { [b]: true, [c]: true }, inked: { [c]: true } };
+	const out = await writeNotebookNotes(vault, nb, {}, new Map());
+	const lec = "2A/CS241E/Lectures/LEC-2026-09-24.md";
+	assert.deepEqual(out.pdfPages, { [lec]: [a] });
+	assert.equal(notePdf("2A/CS241E/assets/notes/Lectures", lec), "2A/CS241E/assets/notes/Lectures/LEC-2026-09-24.pdf");
+	assert.match(files.get(lec)!, /^pdf: "\[\[2A\/CS241E\/assets\/notes\/Lectures\/LEC-2026-09-24\.pdf\|Handwritten notes\]\]"$/m);
+});
