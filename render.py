@@ -100,8 +100,10 @@ def page_strokes(page, width, height):
     """Visible strokes of a page as [{"w": pen width units, "p": [x0, y0, x1, y1, ...]}] in page pixels.
 
     TOTALPATH is a u32 record count, then per record a u32 size and the record: u32 pen type at
-    0, pen width at 8, the coordinate space (rows, columns) at 128 and 132, and at 212 a u32
-    point count followed by (row, column) u32 pairs. Columns run right to left. The block keeps
+    0, pen width at 8, the coordinate space (rows, columns) at 128 and 132, at 208 a u32 count
+    of 24-byte entries (six i32: x, y, width, height, 0, 0; the toolbar rectangles a stroke
+    crossed, usually none), then a u32 point count followed by (row, column) u32 pairs. Columns
+    run right to left. A record whose point array runs past its size is skipped. The block keeps
     erased strokes and the eraser motions themselves. The eraser removes every stroke its path
     touches and every stroke inside the loop it draws, so a stroke that a later eraser record
     passes within ERASE_RADIUS of, or that has a point inside that record's path taken as a
@@ -119,10 +121,13 @@ def page_strokes(page, width, height):
         off += 4 + size
         kind, pen_width = struct.unpack_from("<I", rec, 0)[0], struct.unpack_from("<I", rec, 8)[0]
         rows, cols = struct.unpack_from("<II", rec, 128)
-        n = struct.unpack_from("<I", rec, 212)[0]
-        if not n or not rows or not cols:
+        base = 212 + 24 * struct.unpack_from("<I", rec, 208)[0]
+        if base + 4 > len(rec):
             continue
-        raw = np.frombuffer(rec, dtype="<u4", count=2 * n, offset=216).reshape(n, 2).astype(float)
+        n = struct.unpack_from("<I", rec, base)[0]
+        if not n or not rows or not cols or base + 4 + 8 * n > len(rec):
+            continue
+        raw = np.frombuffer(rec, dtype="<u4", count=2 * n, offset=base + 4).reshape(n, 2).astype(float)
         xy = np.stack([width - raw[:, 1] * width / cols, raw[:, 0] * height / rows], 1)
         records.append((kind, pen_width, xy))
     erased = set()
